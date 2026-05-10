@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, ctx, ALL, no_update
+from dash import dcc, html, dash_table, Input, Output, State, ctx, ALL, MATCH, no_update
 import dash_bootstrap_components as dbc
 from flask import request as flask_request, jsonify
 
@@ -123,16 +123,27 @@ def _design_type_card():
 # DESIGN TAB — helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def make_factor_row(idx, name="", low=-1, high=1, num_levels=3):
+def make_factor_row(idx, name="", low=-1, high=1, num_levels=2, ftype="numeric", cat_levels=""):
+    is_num = ftype == "numeric"
     return dbc.Row([
-        dbc.Col(dbc.Input(id={"type": "f-name",   "index": idx}, value=name,
+        dbc.Col(dbc.Input(id={"type": "f-name", "index": idx}, value=name,
                           placeholder=f"Factor {idx+1}", debounce=True, size="sm"), width=3),
-        dbc.Col(dbc.Input(id={"type": "f-low",    "index": idx}, value=low,
-                          placeholder="Low",  type="number", debounce=True, size="sm"), width=2),
-        dbc.Col(dbc.Input(id={"type": "f-high",   "index": idx}, value=high,
-                          placeholder="High", type="number", debounce=True, size="sm"), width=2),
-        dbc.Col(dbc.Input(id={"type": "f-levels", "index": idx}, value=num_levels,
-                          placeholder="Lvls", type="number", min=2, debounce=True, size="sm"), width=2),
+        dbc.Col(dbc.Select(id={"type": "f-type", "index": idx},
+                           options=[{"label": "Numeric",   "value": "numeric"},
+                                    {"label": "Categoric", "value": "categoric"}],
+                           value=ftype, size="sm"), width=2),
+        dbc.Col(dbc.Input(id={"type": "f-low",  "index": idx}, value=low,
+                          placeholder="Low",  type="number", debounce=True, size="sm"),
+                id={"type": "f-low-col",  "index": idx}, width=2,
+                style={} if is_num else {"display": "none"}),
+        dbc.Col(dbc.Input(id={"type": "f-high", "index": idx}, value=high,
+                          placeholder="High", type="number", debounce=True, size="sm"),
+                id={"type": "f-high-col", "index": idx}, width=2,
+                style={} if is_num else {"display": "none"}),
+        dbc.Col(dbc.Input(id={"type": "f-levels-cat", "index": idx}, value=cat_levels,
+                          placeholder="A, B, C", debounce=True, size="sm"),
+                id={"type": "f-cat-col",  "index": idx}, width=4,
+                style={"display": "none"} if is_num else {}),
         dbc.Col(dbc.Button(html.I(className="bi bi-x"),
                            id={"type": "del-factor", "index": idx},
                            color="danger", outline=True, size="sm", n_clicks=0), width=1),
@@ -304,10 +315,9 @@ design_tab = dbc.Container([
                 ], align="center")),
                 dbc.CardBody([
                     dbc.Row([
-                        dbc.Col(html.Small("Name",   className="text-muted fw-bold"), width=3),
-                        dbc.Col(html.Small("Low",    className="text-muted fw-bold"), width=2),
-                        dbc.Col(html.Small("High",   className="text-muted fw-bold"), width=2),
-                        dbc.Col(html.Small("# Lvls", className="text-muted fw-bold"), width=2),
+                        dbc.Col(html.Small("Name",         className="text-muted fw-bold"), width=3),
+                        dbc.Col(html.Small("Type",         className="text-muted fw-bold"), width=2),
+                        dbc.Col(html.Small("Low / Levels", className="text-muted fw-bold"), width=4),
                     ], className="mb-1 g-1"),
                     html.Div(id="factors-container", children=[
                         make_factor_row(0, "A", -1, 1),
@@ -989,6 +999,21 @@ def manage_factors(_, del_ns, rows, count):
     return rows, count
 
 
+# 2b. Toggle factor type UI (numeric vs categoric)
+@app.callback(
+    Output({"type": "f-low-col",  "index": MATCH}, "style"),
+    Output({"type": "f-high-col", "index": MATCH}, "style"),
+    Output({"type": "f-cat-col",  "index": MATCH}, "style"),
+    Input({"type":  "f-type",     "index": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def toggle_factor_type_ui(ftype):
+    is_num = ftype == "numeric"
+    return ({} if is_num else {"display": "none"},
+            {} if is_num else {"display": "none"},
+            {"display": "none"} if is_num else {})
+
+
 # 3. Generate design
 @app.callback(
     Output("results-table",   "children"),
@@ -997,10 +1022,11 @@ def manage_factors(_, del_ns, rows, count):
     Output("design-stats",    "children"),
     Input("generate-btn", "n_clicks"),
     State("active-design",     "data"),
-    State({"type": "f-name",   "index": ALL}, "value"),
-    State({"type": "f-low",    "index": ALL}, "value"),
-    State({"type": "f-high",   "index": ALL}, "value"),
-    State({"type": "f-levels", "index": ALL}, "value"),
+    State({"type": "f-name",       "index": ALL}, "value"),
+    State({"type": "f-low",        "index": ALL}, "value"),
+    State({"type": "f-high",       "index": ALL}, "value"),
+    State({"type": "f-type",       "index": ALL}, "value"),
+    State({"type": "f-levels-cat", "index": ALL}, "value"),
     State("opt-resolution",    "value"),
     State("opt-generators",    "value"),
     State("opt-ccd-face",      "value"),
@@ -1017,26 +1043,41 @@ def manage_factors(_, del_ns, rows, count):
     prevent_initial_call=True,
 )
 def generate(n_clicks, design_type,
-             names, lows, highs, num_levels,
+             names, lows, highs, ftypes, cat_levels_strs,
              frac_res, frac_gen, ccd_face, ccd_alpha, ccd_cf, ccd_cs,
              bb_center, taguchi_arr, sl_degree,
              n_replicates, n_blocks, randomize_val,
              n_center_points):
     NU = no_update
     factors = []
-    for name, lo, hi, nl in zip(names, lows, highs, num_levels):
+    for name, ftype, lo, hi, cat_lvls_str in zip(names, ftypes, lows, highs, cat_levels_strs):
         if not name:
             continue
-        try:
-            lo_v, hi_v = float(lo or 0), float(hi or 1)
-        except (TypeError, ValueError):
-            lo_v, hi_v = 0.0, 1.0
-        if lo_v >= hi_v:
-            return NU, NU, dbc.Alert(f"Factor '{name}': Low ≥ High.", color="warning"), NU
-        factors.append({"name": name, "low": lo_v, "high": hi_v,
-                        "num_levels": int(nl) if nl else 3})
+        if ftype == "categoric":
+            levels = [l.strip() for l in (cat_lvls_str or "A,B").split(",") if l.strip()]
+            if len(levels) < 2:
+                return NU, NU, dbc.Alert(f"Factor '{name}': provide at least 2 categoric levels.", color="warning"), NU
+            factors.append({"name": name, "type": "categoric", "levels": levels,
+                            "num_levels": len(levels)})
+        else:
+            try:
+                lo_v, hi_v = float(lo or 0), float(hi or 1)
+            except (TypeError, ValueError):
+                lo_v, hi_v = 0.0, 1.0
+            if lo_v >= hi_v:
+                return NU, NU, dbc.Alert(f"Factor '{name}': Low ≥ High.", color="warning"), NU
+            factors.append({"name": name, "type": "numeric", "low": lo_v, "high": hi_v,
+                            "num_levels": 2})
     if not factors:
         return NU, NU, dbc.Alert("Add at least one factor.", color="warning"), NU
+
+    CAT_UNSUPPORTED = {"ccd", "box_behnken", "simplex_lattice", "simplex_centroid", "plackett_burman"}
+    has_cat = any(f.get("type") == "categoric" for f in factors)
+    if has_cat and design_type in CAT_UNSUPPORTED:
+        return NU, NU, dbc.Alert(
+            "Categorical factors are not supported for this design type. "
+            "Use General Factorial or Two-Level Factorial.", color="warning"
+        ), NU
 
     opts = dict(
         resolution=int(frac_res or 3), generators=frac_gen or None,
@@ -1064,9 +1105,9 @@ def generate(n_clicks, design_type,
     # CCD embeds its own center points via pyDOE3).
     n_cp = int(n_center_points or 0)
     if n_cp > 0 and design_type in _CENTER_POINT_DESIGNS:
-        # Midpoint for each factor in actual (uncoded) units
+        # Midpoint for each numeric factor in actual (uncoded) units
         mid = {f["name"]: (float(f["low"]) + float(f["high"])) / 2.0
-               for f in factors}
+               for f in factors if f.get("type") == "numeric"}
         # n_cp center points PER BLOCK — iterate over unique blocks in order
         unique_blocks = list(dict.fromkeys(df["Block"].tolist()))
         cp_all = []
@@ -1091,7 +1132,9 @@ def generate(n_clicks, design_type,
         df = df[admin_present + factor_cols + ["Point Type"]]
 
     df_disp = df.copy()
-    df_disp[factor_cols] = df_disp[factor_cols].round(4)
+    numeric_factor_cols = [f["name"] for f in factors if f.get("type") != "categoric"]
+    if numeric_factor_cols:
+        df_disp[numeric_factor_cols] = df_disp[numeric_factor_cols].round(4)
 
     table = _build_design_table(df_disp, factor_cols)
 
@@ -2105,7 +2148,9 @@ def apply_agent_config(config):
         df = df[admin_present + factor_cols + ["Point Type"]]
 
     df_disp = df.copy()
-    df_disp[factor_cols] = df_disp[factor_cols].round(4)
+    numeric_agent_cols = [f["name"] for f in factors if f.get("type") != "categoric"]
+    if numeric_agent_cols:
+        df_disp[numeric_agent_cols] = df_disp[numeric_agent_cols].round(4)
     table = _build_design_table(df_disp, factor_cols)
 
     n_runs = len(df)
@@ -2122,8 +2167,8 @@ def apply_agent_config(config):
 
     alert = dbc.Alert(warning, color="warning", dismissable=True) if warning else None
 
-    # Rebuild factor rows to reflect agent config in the Design tab
-    factor_rows = [make_factor_row(i, f["name"], f["low"], f["high"])
+    # Rebuild factor rows to reflect agent config in the Design tab (assume numeric)
+    factor_rows = [make_factor_row(i, f["name"], f["low"], f["high"], ftype="numeric")
                    for i, f in enumerate(factors)]
 
     # Panel visibility — same logic as select_design
