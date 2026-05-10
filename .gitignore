@@ -1,0 +1,31 @@
+# Secrets — never commit
+.env
+
+# PDF books — never commit
+*.pdf
+
+# ChromaDB vector store (binary, large)
+chroma_db*/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp

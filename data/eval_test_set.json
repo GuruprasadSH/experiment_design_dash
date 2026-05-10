@@ -1,0 +1,177 @@
+[
+  {
+    "id": "q01",
+    "question": "When should I use a fractional factorial design instead of a full factorial?",
+    "golden_chunk_id": "3.3.4.5",
+    "alt_chunk_ids": ["3.3.4"],
+    "phase": "planning"
+  },
+  {
+    "id": "q02",
+    "question": "What is the purpose of randomization in a designed experiment?",
+    "golden_chunk_id": "3.3.1",
+    "alt_chunk_ids": ["7d", "3.3.2"],
+    "phase": "planning"
+  },
+  {
+    "id": "q03",
+    "question": "How do I use a normal probability plot of residuals to validate a DOE model?",
+    "golden_chunk_id": "4.4",
+    "alt_chunk_ids": ["4.1", "2.4"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q04",
+    "question": "What is confounding in a fractional factorial design?",
+    "golden_chunk_id": "3.3.4.3",
+    "alt_chunk_ids": ["3.3.4", "7c"],
+    "phase": "planning"
+  },
+  {
+    "id": "q05",
+    "question": "How do interaction terms enter a factorial model?",
+    "golden_chunk_id": "4.3",
+    "alt_chunk_ids": ["4.2"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q06",
+    "question": "How many center points should I add to a factorial design and why?",
+    "golden_chunk_id": "3.3.7",
+    "alt_chunk_ids": ["7c", "3.3.6.1", "3.3.4.1"],
+    "phase": "planning"
+  },
+  {
+    "id": "q07",
+    "question": "What is a full factorial design and what are its advantages?",
+    "golden_chunk_id": "3.3.3",
+    "alt_chunk_ids": ["3.3.3.1"],
+    "phase": "planning"
+  },
+  {
+    "id": "q08",
+    "question": "What is blocking in a designed experiment and why is it used?",
+    "golden_chunk_id": "3.3.3.3",
+    "alt_chunk_ids": ["3.3.2", "7c"],
+    "phase": "planning"
+  },
+  {
+    "id": "q09",
+    "question": "How do I choose the resolution for a fractional factorial design?",
+    "golden_chunk_id": "3.3.2.4a",
+    "alt_chunk_ids": ["3.3.4.4", "3.3.2.4b", "3.3.2.4c"],
+    "phase": "planning"
+  },
+  {
+    "id": "q10",
+    "question": "What is response surface methodology and when is it used?",
+    "golden_chunk_id": "3.3.6",
+    "alt_chunk_ids": ["4.7.3", "3.3.6.3"],
+    "phase": "planning"
+  },
+  {
+    "id": "q11",
+    "question": "What is a Box-Behnken design and how does it differ from a CCD?",
+    "golden_chunk_id": "3.3.6.2",
+    "alt_chunk_ids": ["3.3.6.3"],
+    "phase": "planning"
+  },
+  {
+    "id": "q12",
+    "question": "What is a two-level full factorial design and how is it structured?",
+    "golden_chunk_id": "3.3.3.1",
+    "alt_chunk_ids": ["3.3.3"],
+    "phase": "planning"
+  },
+  {
+    "id": "q13",
+    "question": "What types of experimental designs are available and when should each be used?",
+    "golden_chunk_id": "3.3",
+    "alt_chunk_ids": ["3", "3.3.1"],
+    "phase": "planning"
+  },
+  {
+    "id": "q14",
+    "question": "What is a central composite design (CCD)?",
+    "golden_chunk_id": "3.3.6.1",
+    "alt_chunk_ids": ["3.3.6"],
+    "phase": "planning"
+  },
+  {
+    "id": "q15",
+    "question": "What is a Latin square design and when would I use it?",
+    "golden_chunk_id": "3.3.2.1",
+    "alt_chunk_ids": ["3.3.2"],
+    "phase": "planning"
+  },
+  {
+    "id": "q16",
+    "question": "What are the steps in analyzing data from a designed experiment?",
+    "golden_chunk_id": "4.1",
+    "alt_chunk_ids": ["1.3", "1.4"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q17",
+    "question": "What does the 2^(k-p) notation mean in fractional factorial designs?",
+    "golden_chunk_id": "3.3.4",
+    "alt_chunk_ids": ["3.3.4.1", "3.3.4.2"],
+    "phase": "planning"
+  },
+  {
+    "id": "q18",
+    "question": "What is an alias structure in fractional factorial designs?",
+    "golden_chunk_id": "3.3.4.3",
+    "alt_chunk_ids": ["3.3.4.4", "3.3.8.1"],
+    "phase": "planning"
+  },
+  {
+    "id": "q19",
+    "question": "What plots help visualize main effects and interactions in a DOE dataset?",
+    "golden_chunk_id": "4.2",
+    "alt_chunk_ids": ["4.1"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q20",
+    "question": "What are the seven steps to getting good results from a DOE?",
+    "golden_chunk_id": "1.4",
+    "alt_chunk_ids": ["1.3", "1.2"],
+    "phase": "planning"
+  },
+  {
+    "id": "q21",
+    "question": "What is a mixture design and when is it appropriate?",
+    "golden_chunk_id": "5.4",
+    "alt_chunk_ids": ["5.4.1"],
+    "phase": "planning"
+  },
+  {
+    "id": "q22",
+    "question": "How do you use a half-normal probability plot to identify important effects?",
+    "golden_chunk_id": "5.9.8a",
+    "alt_chunk_ids": ["5.9.8b", "5.9.8c", "5.9.8d", "5.9.8e", "5.9.8f", "5.9.8g"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q23",
+    "question": "What are Taguchi methods and how do they differ from classical DOE?",
+    "golden_chunk_id": "5.6",
+    "alt_chunk_ids": [],
+    "phase": "planning"
+  },
+  {
+    "id": "q24",
+    "question": "How can you detect if a regression model is missing important terms?",
+    "golden_chunk_id": "pmd.4.4.6",
+    "alt_chunk_ids": ["pmd.4.4", "pmd.4.4.1"],
+    "phase": "analysis"
+  },
+  {
+    "id": "q25",
+    "question": "What is a screening design and what is it used for?",
+    "golden_chunk_id": "3.3.4.5",
+    "alt_chunk_ids": ["3.3.4", "3.3"],
+    "phase": "planning"
+  }
+]
