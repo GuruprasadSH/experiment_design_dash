@@ -44,9 +44,7 @@ cd doe-assistant
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   OPENAI_API_KEY=sk-...  (only needed for RAG ingest scripts)
+# Edit .env and paste your keys (see .env.example for variable names)
 
 python DOE/app.py
 # Open http://127.0.0.1:8050
@@ -132,8 +130,8 @@ doe-assistant/
 - Before every push, verify:
 
   ```bash
-  git grep -r 'sk-'    # must return empty
-  git grep -r '.pdf'   # must return empty (gitignore pattern excluded)
+  git grep -r "ANTHROPIC_API_KEY=[^=]"    # must return only .env.example blank line
+  git grep -r '.pdf'                       # must return empty (gitignore excluded)
   ```
 
 - `.env.example` contains only blank placeholder values.
