@@ -501,6 +501,12 @@ model_setup_card = dbc.Card([
         dbc.Button([html.I(className="bi bi-calculator me-2"), "Fit Model"],
                    id="fit-model-btn", color="primary",
                    className="w-100", n_clicks=0),
+        dbc.Button(
+            [html.I(className="bi bi-chat-dots me-2"), "Interpret Results"],
+            id="agent-interpret-btn", color="info",
+            className="w-100 mt-1", n_clicks=0,
+            style={"display": "none"},
+        ),
         html.Div(id="fit-error", className="mt-2"),
 
         # Model statistics summary (populated after fitting)
@@ -564,6 +570,16 @@ analysis_tab = dbc.Container([
         dbc.Col(model_setup_card,  md=3),
         dbc.Col(results_accordion, md=9),
     ], className="mt-3 g-3"),
+    # AI interpretation panel — shown after clicking Interpret Results
+    dbc.Collapse(
+        dbc.Card(
+            dbc.CardBody(html.Div(id="interpret-result-div")),
+            className="mt-3",
+            style={"borderLeft": f"3px solid #17a2b8", "boxShadow": CARD_SH},
+        ),
+        id="interpret-collapse",
+        is_open=False,
+    ),
 ], fluid=True)
 
 
@@ -800,6 +816,81 @@ main = html.Div([
     dcc.Interval(id="agent-poll",       interval=2000, n_intervals=0),
     # Chat history — survives callback re-invocations within the same browser session
     dcc.Store(id="agent-chat-history",  storage_type="memory", data=[]),
+    # Sidebar help stores
+    dcc.Store(id="help-chat-history",   storage_type="memory", data=[]),
+
+    # Floating "?" help button
+    dbc.Button(
+        "?",
+        id="help-toggle",
+        color="primary",
+        n_clicks=0,
+        style={
+            "position":     "fixed",
+            "bottom":       "2rem",
+            "right":        "2rem",
+            "zIndex":       1000,
+            "borderRadius": "50%",
+            "width":        "3rem",
+            "height":       "3rem",
+            "fontSize":     "1.2rem",
+            "lineHeight":   "1",
+            "padding":      "0",
+            "boxShadow":    "0 4px 12px rgba(0,0,0,0.25)",
+        },
+    ),
+
+    # Sidebar help Offcanvas
+    dbc.Offcanvas(
+        [
+            html.P(
+                "Ask anything about the current tab. "
+                "I have context about your active design and model.",
+                className="small text-muted mb-2",
+            ),
+            html.Div(
+                id="help-chat-display",
+                style={
+                    "height":     "55vh",
+                    "overflowY":  "scroll",
+                    "border":     "1px solid #dee2e6",
+                    "padding":    "0.75rem",
+                    "borderRadius": "4px",
+                    "background": "#fafbfc",
+                    "fontSize":   "0.84rem",
+                },
+            ),
+            dbc.Row([
+                dbc.Col(
+                    dbc.Input(
+                        id="help-chat-input",
+                        placeholder="Ask about this tab…",
+                        type="text",
+                        size="sm",
+                        n_submit=0,
+                    ),
+                    width=9,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        "Ask", id="help-send-btn",
+                        color="primary", size="sm",
+                        n_clicks=0, className="w-100",
+                    ),
+                    width=3,
+                ),
+            ], className="mt-2 g-1"),
+            html.Small(
+                "Powered by claude-haiku-4-5 · context-aware for active tab",
+                className="text-muted d-block mt-1",
+            ),
+        ],
+        id="help-panel",
+        title="Quick Help",
+        placement="end",
+        is_open=False,
+        style={"width": "400px"},
+    ),
 ])
 
 app.layout = main
@@ -1583,9 +1674,26 @@ def fit_and_display(n_clicks, analysis_json, response_col, factor_cols, term_tab
                    className="text-muted mt-2 d-block"),
     ]), className="border-0", style={"background": "#eef4ff"})
 
-    fit_store = {"factor_cols": fi["factor_cols"], "response_col": fi["response_col"],
-                 "custom_terms": custom_terms, "block_col": block_col_store,
-                 "analysis_df": analysis_json}
+    # Serialise ANOVA rows — convert NaN/inf to None for JSON safety
+    import math as _math
+    def _clean(v):
+        if isinstance(v, float) and (_math.isnan(v) or _math.isinf(v)):
+            return None
+        return v
+
+    anova_records = [{k: _clean(val) for k, val in row.items()}
+                     for row in aov.to_dict("records")]
+    ms_clean = {k: _clean(v) for k, v in ms.items()}
+
+    fit_store = {
+        "factor_cols":  fi["factor_cols"],
+        "response_col": fi["response_col"],
+        "custom_terms": custom_terms,
+        "block_col":    block_col_store,
+        "analysis_df":  analysis_json,
+        "anova":        anova_records,
+        "model_stats":  ms_clean,
+    }
 
     return (aov_table, stats_card,
             plot_pareto(fi), plot_main_effects(fi), plot_residuals(fi),
@@ -2168,6 +2276,154 @@ def configure_app_from_agent(n_clicks, session_id):
         "options":     config.get("options", {}),
     })
     return "tab-design"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CALLBACKS — INTERPRET RESULTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.callback(
+    Output("agent-interpret-btn", "style"),
+    Input("fit-info-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_interpret_btn(fit_info):
+    """Show Interpret Results button once a model has been fitted."""
+    if fit_info:
+        return {"display": "block"}
+    return {"display": "none"}
+
+
+@app.callback(
+    Output("interpret-collapse",  "is_open"),
+    Output("interpret-result-div", "children"),
+    Input("agent-interpret-btn",  "n_clicks"),
+    State("fit-info-store",       "data"),
+    prevent_initial_call=True,
+)
+def interpret_results(n_clicks, fit_store_json):
+    """Call Interpreter on the fitted ANOVA and display the plain-English result."""
+    if not n_clicks or not fit_store_json:
+        return no_update, no_update
+
+    store = json.loads(fit_store_json) if isinstance(fit_store_json, str) else fit_store_json
+    anova_data   = store.get("anova",        [])
+    model_stats  = store.get("model_stats",  {})
+    factor_cols  = store.get("factor_cols",  [])
+    response_col = store.get("response_col", "Response")
+
+    from agent.interpreter import Interpreter
+    from agent.recommender import recommend_next_step
+
+    try:
+        interp_text = Interpreter().interpret(
+            anova_data, model_stats, factor_cols, response_col
+        )
+    except Exception as e:
+        interp_text = f"[Interpretation unavailable: {e}]"
+
+    rec_key, rec_justification = recommend_next_step(model_stats, anova_data)
+    rec_labels = {
+        "optimize":         ("success", "Proceed to optimization"),
+        "add_runs":         ("warning", "Add more runs"),
+        "augment_design":   ("info",    "Augment the design"),
+        "run_confirmatory": ("primary", "Run confirmatory experiments"),
+    }
+    rec_color, rec_label = rec_labels.get(rec_key, ("secondary", rec_key))
+
+    result = html.Div([
+        html.H6([html.I(className="bi bi-chat-dots me-2"), "AI Interpretation"],
+                className="fw-bold mb-2"),
+        html.P(interp_text, style={"whiteSpace": "pre-wrap", "fontSize": "0.88rem"}),
+        html.Hr(className="my-2"),
+        html.Div([
+            html.Strong("Recommended next step: "),
+            dbc.Badge(rec_label, color=rec_color, className="me-2"),
+            html.Small(rec_justification, className="text-muted"),
+        ]),
+    ])
+    return True, result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CALLBACKS — SIDEBAR HELP PANEL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _make_help_system_prompt(active_tab: str, app_state: dict) -> str:
+    state_summary = (
+        json.dumps(
+            {k: v for k, v in app_state.items() if k in
+             ("design_type", "factor_count", "response_col", "anova", "model_stats")},
+            indent=2,
+        )
+        if app_state else "No model fitted yet."
+    )
+    tab_names = {
+        "tab-design":      "Design",
+        "tab-analysis":    "Analysis",
+        "tab-prediction":  "Prediction & Optimization",
+        "tab-agent":       "AI Assistant",
+    }
+    tab_label = tab_names.get(active_tab or "", active_tab or "unknown")
+    return (
+        f"You are a concise help assistant for a DOE (Design of Experiments) "
+        f"Dash application. The user is on the '{tab_label}' tab.\n\n"
+        f"Current app state:\n{state_summary}\n\n"
+        "Provide short, practical guidance (2-4 sentences). "
+        "Reference NIST / Montgomery best practices where relevant. "
+        "Be direct — the user needs actionable help, not a lecture."
+    )
+
+
+@app.callback(
+    Output("help-panel", "is_open"),
+    Input("help-toggle", "n_clicks"),
+    State("help-panel",  "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_help(n_clicks, is_open):
+    if n_clicks:
+        return not is_open
+    return is_open
+
+
+@app.callback(
+    Output("help-chat-display", "children"),
+    Output("help-chat-input",   "value"),
+    Output("help-chat-history", "data"),
+    Input("help-send-btn",      "n_clicks"),
+    Input("help-chat-input",    "n_submit"),
+    State("help-chat-input",    "value"),
+    State("main-tabs",          "active_tab"),
+    State("help-chat-history",  "data"),
+    prevent_initial_call=True,
+)
+def send_help_message(n_clicks, n_submit, user_input, active_tab, history):
+    """Handle a question in the sidebar help panel using claude-haiku-4-5."""
+    if not user_input or not user_input.strip():
+        return no_update, no_update, no_update
+
+    from anthropic import Anthropic as _Anthropic
+    history = list(history or [])
+    history.append({"role": "user", "content": user_input.strip()})
+
+    system = _make_help_system_prompt(active_tab or "tab-design", _agent_readable_state)
+
+    try:
+        client   = _Anthropic()
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=system,
+            messages=history,
+        )
+        reply = response.content[0].text
+    except Exception as e:
+        reply = f"[Help unavailable: {e}]"
+
+    history.append({"role": "assistant", "content": reply})
+    children = [_chat_bubble(m["role"], m["content"]) for m in history]
+    return children, "", history
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
