@@ -537,7 +537,12 @@ results_accordion = dbc.Accordion([
                                    className="text-muted text-center py-3")),
         dbc.Collapse(
             dbc.Card(
-                dbc.CardBody(html.Div(id="interpret-result-div")),
+                dbc.CardBody(
+                    dcc.Loading(
+                        html.Div(id="interpret-result-div"),
+                        type="circle", color="#17a2b8",
+                    )
+                ),
                 className="mt-3",
                 style={"borderLeft": "3px solid #17a2b8", "boxShadow": "0 2px 8px rgba(0,0,0,.09)"},
             ),
@@ -649,7 +654,10 @@ prediction_tab = dbc.Container([
                     id="optimize-btn", color="primary",
                     className="w-100 mt-2", n_clicks=0,
                 ),
-                html.Div(id="optimization-results", className="mt-2"),
+                dcc.Loading(
+                    html.Div(id="optimization-results", className="mt-2"),
+                    type="circle", color=ACCENT,
+                ),
             ]),
         ], style={"boxShadow": CARD_SH, "position": "sticky", "top": "1rem"}), md=4),
 
@@ -1582,16 +1590,14 @@ def build_term_picker(factor_cols, analysis_json):
             cols = [factor_cols[i] for i in combo]
             term_str = term_label(cols)
             rows.append({"Term": term_str, "In model": "yes" if arity == 1 else "no",
-                         "arity": arity, "disabled": False,
-                         "_factors": cols})
+                         "arity": arity, "disabled": False})
 
     # Add quadratic rows only for numeric factors
     for fc in factor_cols:
         if fc not in cat_cols:
             quad_label = f"{fc}²"
             rows.append({"Term": quad_label, "In model": "no",
-                         "arity": "quad", "disabled": not has_curvature,
-                         "_factors": [fc]})
+                         "arity": "quad", "disabled": not has_curvature})
 
     return rows
 
