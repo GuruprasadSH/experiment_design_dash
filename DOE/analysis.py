@@ -69,8 +69,22 @@ def _decode_term(term: str, rev: dict) -> str:
     m = re.match(r"I\((\w+)\*\*2\)", term)
     if m:
         return f"{rev.get(m.group(1), m.group(1))}²"
+    # Handle C(x)[T.level] — categorical term with level
+    c_match = re.match(r"C\((\w+)\)\[T\.(.+)\]", term)
+    if c_match:
+        safe_name = c_match.group(1)
+        level = c_match.group(2)
+        col_name = rev.get(f"C({safe_name})", safe_name)
+        return f"{col_name}[{level}]"
+    # Strip C() from interaction parts like "C(material):x0"
+    def _part_decode(p):
+        p = p.strip()
+        cm = re.match(r"C\((\w+)\)", p)
+        if cm:
+            return rev.get(f"C({cm.group(1)})", cm.group(1))
+        return rev.get(p, p)
     parts = term.split(":")
-    return " × ".join(rev.get(p.strip(), p.strip()) for p in parts)
+    return " × ".join(_part_decode(p) for p in parts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,11 +134,25 @@ def fit_model(df: pd.DataFrame,
             f"Only {n} complete observations — need at least {k + 2} to fit."
         )
 
-    coded_df, encoding = encode_factors(df_fit, factor_cols)
+    # Detect categorical vs numeric factor columns
+    cat_cols = [col for col in factor_cols
+                if not pd.api.types.is_numeric_dtype(df_fit[col])]
+    num_cols = [col for col in factor_cols if col not in cat_cols]
 
-    safe_map = {col: f"x{i}" for i, col in enumerate(factor_cols)}
+    coded_df, encoding = encode_factors(df_fit, num_cols)
+
+    safe_map = {col: f"x{i}" for i, col in enumerate(num_cols)}
     rev_map  = {v: k for k, v in safe_map.items()}
     xs       = list(safe_map.values())
+
+    # Safe names and level info for categorical columns
+    cat_safe_map = {col: _safe(col) for col in cat_cols}
+    cat_levels_info = {col: sorted(df_fit[col].dropna().astype(str).unique().tolist())
+                       for col in cat_cols}
+    # Add categoric rev_map entries
+    for col, safe in cat_safe_map.items():
+        rev_map[f"C({safe})"] = col
+        rev_map[safe] = col
 
     if custom_terms is not None:
         # Validate and translate each term
@@ -134,6 +162,8 @@ def fit_model(df: pd.DataFrame,
             if "^2" in t:
                 # Pure quadratic: "A^2"
                 factor_name = t.replace("^2", "").strip()
+                if factor_name in cat_cols:
+                    raise ValueError(f"Cannot add quadratic term for categorical factor '{factor_name}'.")
                 if factor_name not in safe_map:
                     raise ValueError(f"Unknown factor '{factor_name}' in term '{t}'")
                 x = safe_map[factor_name]
@@ -149,36 +179,59 @@ def fit_model(df: pd.DataFrame,
             elif "*" in t:
                 # Interaction: "A*B" or "A*B*C" etc.
                 parts = [p.strip() for p in t.split("*")]
+                term_parts = []
                 for p in parts:
-                    if p not in safe_map:
+                    if p in cat_safe_map:
+                        term_parts.append(f"C({cat_safe_map[p]})")
+                    elif p in safe_map:
+                        term_parts.append(safe_map[p])
+                    else:
                         raise ValueError(f"Unknown factor '{p}' in term '{t}'")
-                terms.append(":".join(safe_map[p] for p in parts))
+                terms.append(":".join(term_parts))
             else:
                 # Main effect
-                if t not in safe_map:
+                if t in cat_safe_map:
+                    terms.append(f"C({cat_safe_map[t]})")
+                elif t in safe_map:
+                    terms.append(safe_map[t])
+                else:
                     raise ValueError(f"Unknown factor '{t}' in term '{t}'")
-                terms.append(safe_map[t])
     else:
+        cat_terms = [f"C({cat_safe_map[col]})" for col in cat_cols]
         if model_type == "main":
-            terms = xs
+            terms = xs + cat_terms
         elif model_type == "twfi":
-            terms = xs + [f"{a}:{b}" for a, b in combinations(xs, 2)]
+            num_terms = xs + [f"{a}:{b}" for a, b in combinations(xs, 2)]
+            # Add numeric × categoric interactions
+            for x in xs:
+                for col in cat_cols:
+                    num_terms.append(f"{x}:C({cat_safe_map[col]})")
+            # Add categoric × categoric interactions
+            cat_safe_list = [f"C({cat_safe_map[col]})" for col in cat_cols]
+            for a, b in combinations(cat_safe_list, 2):
+                num_terms.append(f"{a}:{b}")
+            terms = num_terms
         elif model_type == "quad":
-            # Guard: refuse if no factor has center points or 3+ levels
+            # Guard: check curvature in numeric factors
             has_curvature = False
-            for col in factor_cols:
+            for col in num_cols:
                 coded_vals = coded_df[col].round(8).unique()
                 if not all(v in (-1.0, 1.0) for v in coded_vals):
                     has_curvature = True
                     break
-            if not has_curvature:
+            if not has_curvature and num_cols:
                 raise ValueError(
                     "Pure quadratic on 'all factors' requires center "
                     "points or a factor with 3+ levels."
                 )
-            terms = (xs
-                     + [f"{a}:{b}" for a, b in combinations(xs, 2)]
-                     + [f"I({x}**2)" for x in xs])
+            quad_num = (xs
+                        + [f"{a}:{b}" for a, b in combinations(xs, 2)]
+                        + [f"I({x}**2)" for x in xs])
+            cat_terms_quad = [f"C({cat_safe_map[col]})" for col in cat_cols]
+            for x in xs:
+                for col in cat_cols:
+                    cat_terms_quad.append(f"{x}:C({cat_safe_map[col]})")
+            terms = quad_num + cat_terms_quad
         else:
             raise ValueError(f"Unknown model_type: {model_type!r}")
 
@@ -192,8 +245,11 @@ def fit_model(df: pd.DataFrame,
             "Reduce model complexity or add more runs / replicates."
         )
 
-    fdf          = coded_df.rename(columns=safe_map)
-    fdf["y"]     = df_fit[response_col].values
+    fdf = coded_df.rename(columns=safe_map)
+    # Add categorical columns by their safe names
+    for col in cat_cols:
+        fdf[cat_safe_map[col]] = df_fit[col].astype(str).values
+    fdf["y"] = df_fit[response_col].values
 
     # Add block column as categorical if requested
     block_safe = None
@@ -220,6 +276,7 @@ def fit_model(df: pd.DataFrame,
     return dict(
         results=results, formula_df=fdf, encoding=encoding,
         safe_map=safe_map, rev_map=rev_map,
+        cat_cols=cat_cols, cat_safe_map=cat_safe_map, cat_levels=cat_levels_info,
         factor_cols=factor_cols, response_col=response_col,
         model_type=model_type if custom_terms is None else "custom",
         custom_terms=custom_terms,
@@ -271,7 +328,9 @@ def _curvature_rows(fi: dict, ss_res: float, df_res: int) -> list:
     if any(t.startswith("I(") for t in fi["terms"]):
         return []
 
-    coded_cols = list(fi["safe_map"].values())
+    coded_cols = list(fi["safe_map"].values())  # only numeric safe names
+    if not coded_cols:
+        return []
     fdf = fi["formula_df"]
     coded = fdf[coded_cols].round(8)
     y = fdf["y"].values
@@ -340,6 +399,7 @@ def get_anova_table(fi: dict) -> pd.DataFrame:
     # ── Separate block row from factor rows ───────────────────────────────────
     block_row = None
     term_rows = []
+    block_safe_name = _safe(fi["block_col"]) if fi.get("block_col") else None
     for src, row in aov.iterrows():
         if src in ("Intercept", "Residual"):
             continue
@@ -348,8 +408,8 @@ def get_anova_table(fi: dict) -> pd.DataFrame:
         ms  = ss / df_ if df_ > 0 else np.nan
         f   = float(row.get("F",      np.nan))
         p   = float(row.get("PR(>F)", np.nan))
-        if src.startswith("C("):
-            # This is the block term — no F/p per standard fixed-block ANOVA
+        # Check if this is the blocks term specifically
+        if block_safe_name and src == f"C({block_safe_name})":
             block_row = dict(Source="Blocks", SS=ss, df=df_, MS=ms,
                              F=np.nan, **{"p-value": np.nan})
         else:
@@ -374,18 +434,22 @@ def get_anova_table(fi: dict) -> pd.DataFrame:
     lof_rows = []
     df_orig  = fi["df_original"]
 
-    # Build factor-level groups from coded columns (xi only, excludes block).
+    # Build factor-level groups from coded numeric columns only (xi, excludes block & cat).
     # Exclude center-point rows (all coded values == 0): they are handled by
     # _curvature_rows and must not inflate the LoF pure-error estimate.
-    coded    = fi["formula_df"][list(fi["safe_map"].values())]
-    y        = fi["formula_df"]["y"].values
-    is_ctr   = (coded.round(8) == 0).all(axis=1).values
-    coded_lof = coded[~is_ctr]
-    y_lof     = y[~is_ctr]
-    keys  = [tuple(row) for row in coded_lof.round(8).values.tolist()]
-    groups: dict = {}
-    for key, yi in zip(keys, y_lof):
-        groups.setdefault(key, []).append(float(yi))
+    coded_num_cols = list(fi["safe_map"].values())  # only numeric safe names
+    if coded_num_cols:
+        coded    = fi["formula_df"][coded_num_cols]
+        y        = fi["formula_df"]["y"].values
+        is_ctr   = (coded.round(8) == 0).all(axis=1).values
+        coded_lof = coded[~is_ctr]
+        y_lof     = y[~is_ctr]
+        keys  = [tuple(row) for row in coded_lof.round(8).values.tolist()]
+        groups: dict = {}
+        for key, yi in zip(keys, y_lof):
+            groups.setdefault(key, []).append(float(yi))
+    else:
+        groups = {}
 
     # Path A — explicit Replicate column
     if ("Replicate" in df_orig.columns and
@@ -483,15 +547,16 @@ def get_equations(fi: dict) -> dict:
             parts.append(f"  {sign} {abs(coef):.4f}·{decoded}")
     coded_eq = "ŷ = " + "".join(parts)
 
-    # Actual-unit equation (main effects only — closed form)
+    # Actual-unit equation (main effects only — closed form; skip for categorical models)
     terms_are_main_only = all(":" not in t and "I(" not in t for t in fi["terms"])
-    if fi["model_type"] == "main" or (fi["model_type"] == "custom" and terms_are_main_only):
+    has_cat = bool(fi.get("cat_cols"))
+    if not has_cat and (fi["model_type"] == "main" or (fi["model_type"] == "custom" and terms_are_main_only)):
         b0 = float(res.params["Intercept"])
         b0_act = b0
         act_parts = []
         for col in fi["factor_cols"]:
-            s = safe_map[col]
-            if s not in res.params:
+            s = safe_map.get(col)
+            if s is None or s not in res.params:
                 continue
             b    = float(res.params[s])
             e    = enc[col]
@@ -501,11 +566,16 @@ def get_equations(fi: dict) -> dict:
             act_parts.append(f"  {sign} {abs(b_a):.4f}·{col}")
         actual_eq = "ŷ = " + f"{b0_act:+.4f}" + "".join(act_parts)
     else:
-        # Coding reference table for interactive/quadratic terms
-        coding_lines = [
-            f"  {col}: x = (X − {enc[col]['mid']:.4f}) / {enc[col]['half']:.4f}"
-            for col in fi["factor_cols"]
-        ]
+        # Coding reference table for interactive/quadratic/categorical terms
+        coding_lines = []
+        for col in fi["factor_cols"]:
+            if col in fi.get("cat_cols", []):
+                lvls = fi.get("cat_levels", {}).get(col, [])
+                coding_lines.append(f"  {col}: categoric ({', '.join(lvls)})")
+            else:
+                coding_lines.append(
+                    f"  {col}: x = (X − {enc[col]['mid']:.4f}) / {enc[col]['half']:.4f}"
+                )
         actual_eq = coded_eq + "\n\nCoding (X = actual, x = coded):\n" + "\n".join(coding_lines)
 
     return dict(coded=coded_eq, actual=actual_eq)
@@ -781,8 +851,13 @@ def plot_main_effects(fi: dict) -> go.Figure:
         c = idx  % cols_per_row + 1
         x_raw  = df_fit[col].values
         y_raw  = df_fit[response].values
-        ux     = np.sort(np.unique(np.round(x_raw, 6)))
-        means  = [float(np.mean(y_raw[np.round(x_raw, 6) == xv])) for xv in ux]
+        is_cat = not pd.api.types.is_numeric_dtype(df_fit[col])
+        if is_cat:
+            ux = sorted(set(str(v) for v in x_raw))
+            means = [float(np.mean(y_raw[np.array([str(v) for v in x_raw]) == xv])) for xv in ux]
+        else:
+            ux    = np.sort(np.unique(np.round(x_raw.astype(float), 6)))
+            means = [float(np.mean(y_raw[np.round(x_raw.astype(float), 6) == xv])) for xv in ux]
 
         fig.add_trace(go.Scatter(
             x=ux, y=means, mode="lines+markers",
@@ -820,15 +895,30 @@ def plot_interaction(fi: dict, factor_a: str, factor_b: str) -> go.Figure:
     xb = df_fit[factor_b].values
     y  = df_fit[response].values
 
-    ux_a = np.sort(np.unique(np.round(xa, 6)))
-    ux_b = np.sort(np.unique(np.round(xb, 6)))
+    is_cat_a = not pd.api.types.is_numeric_dtype(df_fit[factor_a])
+    is_cat_b = not pd.api.types.is_numeric_dtype(df_fit[factor_b])
+
+    if is_cat_a:
+        ux_a = sorted(set(str(v) for v in xa))
+        xa_str = np.array([str(v) for v in xa])
+    else:
+        ux_a = np.sort(np.unique(np.round(xa.astype(float), 6)))
+        xa_str = np.round(xa.astype(float), 6)
+
+    if is_cat_b:
+        ux_b = sorted(set(str(v) for v in xb))
+        xb_str = np.array([str(v) for v in xb])
+    else:
+        ux_b = np.sort(np.unique(np.round(xb.astype(float), 6)))
+        xb_str = np.round(xb.astype(float), 6)
+
     palette = [ACCENT, C_ORG, C_GREEN, "#ae3ec9", C_RED]
 
     fig = go.Figure()
     for j, bv in enumerate(ux_b):
-        mask  = np.round(xb, 6) == bv
-        means = [float(np.mean(y[mask & (np.round(xa, 6) == av)]))
-                 if np.any(mask & (np.round(xa, 6) == av)) else np.nan
+        mask  = xb_str == (str(bv) if is_cat_b else bv)
+        means = [float(np.mean(y[mask & (xa_str == (str(av) if is_cat_a else av))]))
+                 if np.any(mask & (xa_str == (str(av) if is_cat_a else av))) else np.nan
                  for av in ux_a]
         fig.add_trace(go.Scatter(
             x=ux_a, y=means, mode="lines+markers",
