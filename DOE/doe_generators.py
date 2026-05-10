@@ -20,18 +20,35 @@ def _encode_levels(col, low, high):
 
 
 def _coded_to_actual(matrix, factors):
-    """Convert a coded matrix (values in [-1, 0, 1]) to actual factor values."""
+    """
+    Convert a coded matrix to actual factor values using centered scaling:
+
+        actual = center + coded × half_range
+
+    where center = (low + high) / 2  and  half_range = (high - low) / 2.
+
+    Correctly places:
+      coded  ±1  →  factor corners (low / high)          — factorial pts
+      coded   0  →  centre of range                      — centre pts
+      coded ±α   →  outside corners by (α−1)×half_range  — CCD axial pts
+
+    The previous _encode_levels approach was incorrect for CCD: it mapped
+    the full coded range (e.g. ±1.414) to [low, high], which moved
+    factorial corners to ≈ ±0.707 of the range rather than the boundaries.
+    """
     names = [f["name"] for f in factors]
     df = pd.DataFrame(matrix, columns=names)
     for f in factors:
         if f.get("type") == "categoric":
-            levels = f["levels"]  # list of strings
-            # coded values are -1 and +1; map to the two labels
+            levels = f["levels"]
             df[f["name"]] = df[f["name"]].apply(
                 lambda v: levels[0] if v <= 0 else levels[1]
             )
         else:
-            df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
+            lo, hi = float(f["low"]), float(f["high"])
+            center = (lo + hi) / 2.0
+            half   = (hi - lo) / 2.0
+            df[f["name"]] = center + df[f["name"]] * half
     return df
 
 
@@ -168,10 +185,30 @@ def central_composite(factors, face="ccc", alpha="orthogonal", center=(4, 4)):
     face   : 'ccc' (circumscribed) | 'cci' (inscribed) | 'ccf' (face-centered)
     alpha  : 'orthogonal' | 'rotatable'
     center : (n_center_factorial, n_center_star)
+
+    Point Type column added to the returned DataFrame:
+      'Factorial' — corner points (coded ±1 on all factors)
+      'Axial'     — star/axial points (one factor at ±α, rest at 0)
+      'Center'    — centre points (all factors at 0)
     """
     face_str = _CCD_FACE_MAP.get(face, "circumscribed")
-    matrix = pyDOE3.ccdesign(len(factors), center=center, alpha=alpha, face=face_str)
-    return _add_run_order(_coded_to_actual(matrix, factors))
+    matrix   = pyDOE3.ccdesign(len(factors), center=center, alpha=alpha, face=face_str)
+
+    # Label each row before converting to actual values
+    tol = 1e-8
+    point_types = []
+    for row in matrix:
+        abs_vals = np.abs(row)
+        if np.all(abs_vals < tol):
+            point_types.append("Center")
+        elif np.sum(abs_vals > tol) == 1:
+            point_types.append("Axial")
+        else:
+            point_types.append("Factorial")
+
+    df = _coded_to_actual(matrix, factors)
+    df["Point Type"] = point_types
+    return _add_run_order(df)
 
 
 # ── 5. Box-Behnken Design ────────────────────────────────────────────────────

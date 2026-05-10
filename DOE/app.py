@@ -76,10 +76,11 @@ TAGUCHI_ARRAYS = list_taguchi_arrays()
 
 # Admin column colours in DataTable
 _ADMIN_STYLE = {
-    "Std Order": ("#6c757d", "italic"),
-    "Run Order": (ACCENT,    "normal"),
-    "Block":     ("#0ca678", "normal"),
-    "Replicate": ("#e67700", "normal"),
+    "Std Order":  ("#6c757d", "italic"),
+    "Run Order":  (ACCENT,    "normal"),
+    "Block":      ("#0ca678", "normal"),
+    "Replicate":  ("#e67700", "normal"),
+    "Point Type": ("#6f42c1", "normal"),   # purple — CCD / design-structure label
 }
 
 
@@ -521,6 +522,12 @@ model_setup_card = dbc.Card([
             className="w-100 mt-1", n_clicks=0,
             style={"display": "none"},
         ),
+        # Spinner shown while Claude API call runs (collapse is hidden, so
+        # the spinner inside interpret-result-div would not be visible).
+        dcc.Loading(
+            html.Div(id="interpret-status", style={"minHeight": "4px"}),
+            type="dot", color="#17a2b8",
+        ),
         html.Div(id="fit-error", className="mt-2"),
 
         # Model statistics summary (populated after fitting)
@@ -789,8 +796,7 @@ agent_tab = dbc.Container([
                     html.Hr(),
                     html.P(
                         html.Small(
-                            "Powered by claude-sonnet-4-6. "
-                            "NIST rules are hardcoded — no RAG retrieval.",
+                            "Powered by claude-sonnet-4-6.",
                             className="text-muted",
                         )
                     ),
@@ -2427,17 +2433,18 @@ def toggle_interpret_btn(fit_info):
 
 
 @app.callback(
-    Output("interpret-collapse",  "is_open"),
+    Output("interpret-collapse",   "is_open"),
     Output("interpret-result-div", "children"),
-    Input("agent-interpret-btn",  "n_clicks"),
-    State("fit-info-store",       "data"),
+    Output("interpret-status",     "children"),
+    Input("agent-interpret-btn",   "n_clicks"),
+    State("fit-info-store",        "data"),
     prevent_initial_call=True,
 )
 def interpret_results(n_clicks, fit_store_json):
     """Call Interpreter on the fitted ANOVA and display the plain-English result."""
     print(f"[interpret_results] fired: n_clicks={n_clicks}, fit_store present={bool(fit_store_json)}")
     if not n_clicks or not fit_store_json:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     store = json.loads(fit_store_json) if isinstance(fit_store_json, str) else fit_store_json
     anova_data   = store.get("anova",        [])
@@ -2458,7 +2465,7 @@ def interpret_results(n_clicks, fit_store_json):
             color="danger",
             className="mb-0",
         )
-        return True, error_content
+        return True, error_content, ""
 
     rec_key, rec_justification = recommend_next_step(model_stats, anova_data)
     rec_labels = {
@@ -2480,7 +2487,7 @@ def interpret_results(n_clicks, fit_store_json):
             html.Small(rec_justification, className="text-muted"),
         ]),
     ])
-    return True, result
+    return True, result, ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
