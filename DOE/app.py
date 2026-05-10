@@ -284,7 +284,7 @@ def _build_design_table(df_disp, factor_cols):
         columns=[{"name": c, "id": c} for c in df_disp.columns],
         data=df_disp.to_dict("records"),
         page_size=25, sort_action="native", filter_action="native",
-        style_table={"overflowX": "auto"},
+        style_table={"overflowX": "auto", "maxHeight": "400px", "overflowY": "auto"},
         style_header={"fontWeight": "bold", "fontSize": "0.82rem",
                       "textAlign": "center", "border": "none"},
         style_header_conditional=header_cond,
