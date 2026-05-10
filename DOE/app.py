@@ -526,7 +526,7 @@ model_setup_card = dbc.Card([
         # Model statistics summary (populated after fitting)
         html.Div(id="model-stats-summary", className="mt-3"),
     ]),
-], style={"boxShadow": CARD_SH})
+], style={"boxShadow": CARD_SH, "position": "sticky", "top": "1rem"})
 
 # ── Section 3: Results accordion (right panel) ───────────────────────────────
 results_accordion = dbc.Accordion([
@@ -547,6 +547,7 @@ results_accordion = dbc.Accordion([
     ], title="ANOVA Table", item_id="anova"),
 
     dbc.AccordionItem([
+        html.Small("Effect Estimates", className="text-muted fw-bold d-block mb-2"),
         dbc.Row([
             dbc.Col(dcc.Graph(id="pareto-plot",    config={"displayModeBar": False},
                               style={"minHeight": "300px"}), md=6),
@@ -564,6 +565,8 @@ results_accordion = dbc.Accordion([
             ], md=6),
         ], className="mb-3"),
         dcc.Graph(id="main-effects-plot", config={"displayModeBar": False}),
+        html.Hr(className="my-1"),
+        html.Small("Model Diagnostics", className="text-muted fw-bold d-block mb-2"),
         html.Hr(className="my-2"),
         dbc.Row([
             dbc.Col([dbc.Label("Interaction plot — Factor A", className="small"),
