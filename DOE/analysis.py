@@ -1040,15 +1040,23 @@ def predict_response(fi: dict, point_actual: dict) -> float:
     -------
     Predicted response (float)
     """
-    encoding = fi["encoding"]
-    safe_map = fi["safe_map"]
+    encoding     = fi["encoding"]
+    safe_map     = fi["safe_map"]
+    cat_cols     = fi.get("cat_cols", [])
+    cat_safe_map = fi.get("cat_safe_map", {})
+    cat_levels   = fi.get("cat_levels", {})
 
     coded_row = {}
     for col in fi["factor_cols"]:
-        enc = encoding[col]
-        x_a = float(point_actual.get(col, enc["mid"]))
-        coded_row[safe_map[col]] = (x_a - enc["mid"]) / enc["half"]
+        if col in cat_cols:
+            cat_safe = cat_safe_map[col]
+            coded_row[cat_safe] = str(point_actual.get(col, cat_levels[col][0]))
+        else:
+            enc = encoding[col]
+            x_a = float(point_actual.get(col, enc["mid"]))
+            coded_row[safe_map[col]] = (x_a - enc["mid"]) / enc["half"]
 
+    # Supply reference block level if model was fit with blocks
     if fi.get("block_col"):
         block_safe = fi.get("block_safe") or _safe(fi["block_col"])
         block_levels = sorted(fi["formula_df"][block_safe].unique().tolist())
@@ -1078,9 +1086,15 @@ def get_surface_data(fi: dict, fa: str, fb: str,
     Y : (n, n) array of fb actual values
     Z : (n, n) array of predicted response values
     """
-    encoding  = fi["encoding"]
-    safe_map  = fi["safe_map"]
-    constants = constants_actual or {}
+    cat_cols = fi.get("cat_cols", [])
+    if fa in cat_cols or fb in cat_cols:
+        raise ValueError("Surface plot requires two numeric factors.")
+
+    encoding     = fi["encoding"]
+    safe_map     = fi["safe_map"]
+    cat_safe_map = fi.get("cat_safe_map", {})
+    cat_levels   = fi.get("cat_levels", {})
+    constants    = constants_actual or {}
 
     enc_a = encoding[fa]
     enc_b = encoding[fb]
@@ -1096,10 +1110,14 @@ def get_surface_data(fi: dict, fa: str, fb: str,
     for col in fi["factor_cols"]:
         if col in (fa, fb):
             continue
-        enc   = encoding[col]
-        val_a = float(constants.get(col, enc["mid"]))
-        val_c = (val_a - enc["mid"]) / enc["half"]
-        rows[safe_map[col]] = np.full(n * n, val_c)
+        if col in cat_cols:
+            cat_safe = cat_safe_map[col]
+            rows[cat_safe] = [str(constants.get(col, cat_levels[col][0]))] * (n * n)
+        else:
+            enc   = encoding[col]
+            val_a = float(constants.get(col, enc["mid"]))
+            val_c = (val_a - enc["mid"]) / enc["half"]
+            rows[safe_map[col]] = np.full(n * n, val_c)
 
     if fi.get("block_col"):
         block_safe = fi.get("block_safe") or _safe(fi["block_col"])
@@ -1117,6 +1135,8 @@ def optimize_response(fi: dict, goal: str = "maximize",
                       target: float = None) -> tuple:
     """
     Numerical response optimisation using differential evolution.
+    Enumerates categorical level combinations and optimizes numeric factors
+    continuously for each combination.
 
     Parameters
     ----------
@@ -1129,36 +1149,73 @@ def optimize_response(fi: dict, goal: str = "maximize",
     (best_point_actual: dict, predicted_value: float)
     """
     from scipy.optimize import differential_evolution
+    from itertools import product as iproduct
 
-    encoding    = fi["encoding"]
-    factor_cols = fi["factor_cols"]
-    safe_map    = fi["safe_map"]
+    encoding       = fi["encoding"]
+    factor_cols    = fi["factor_cols"]
+    safe_map       = fi["safe_map"]
+    cat_cols       = fi.get("cat_cols", [])
+    cat_safe_map   = fi.get("cat_safe_map", {})
+    cat_levels_map = fi.get("cat_levels", {})
+    num_cols       = [c for c in factor_cols if c not in cat_cols]
 
-    def objective(x_coded):
-        pred_row = {safe_map[col]: x_coded[i]
-                    for i, col in enumerate(factor_cols)}
-        if fi.get("block_col"):
-            block_safe = fi.get("block_safe") or _safe(fi["block_col"])
-            block_levels = sorted(fi["formula_df"][block_safe].unique().tolist())
-            pred_row[block_safe] = block_levels[0]
-        pred_row["y"] = 0.0
-        y = float(fi["results"].predict(pd.DataFrame([pred_row])).iloc[0])
-        if goal == "maximize":
-            return -y
-        elif goal == "minimize":
-            return y
+    # Enumerate all categorical combinations
+    if cat_cols:
+        cat_combos = list(iproduct(*[cat_levels_map[c] for c in cat_cols]))
+    else:
+        cat_combos = [()]
+
+    block_safe = None
+    block_ref = None
+    if fi.get("block_col"):
+        block_safe = fi.get("block_safe") or _safe(fi["block_col"])
+        block_ref = sorted(fi["formula_df"][block_safe].unique().tolist())[0]
+
+    best_val, best_point = None, None
+    for combo in cat_combos:
+        cat_fixed = dict(zip(cat_cols, combo))
+
+        def objective(x_coded, cat_fixed=cat_fixed):
+            pred_row = {safe_map[col]: x_coded[i] for i, col in enumerate(num_cols)}
+            for col, val in cat_fixed.items():
+                pred_row[cat_safe_map[col]] = str(val)
+            if block_safe:
+                pred_row[block_safe] = block_ref
+            pred_row["y"] = 0.0
+            y = float(fi["results"].predict(pd.DataFrame([pred_row])).iloc[0])
+            if goal == "maximize":
+                return -y
+            elif goal == "minimize":
+                return y
+            else:
+                return (y - float(target or 0.0)) ** 2
+
+        bounds = [(-1.0, 1.0)] * len(num_cols)
+        if bounds:
+            result = differential_evolution(
+                objective, bounds, seed=42, tol=1e-10,
+                maxiter=2000, popsize=20, polish=True,
+            )
+            num_actual = {col: encoding[col]["mid"] + result.x[i] * encoding[col]["half"]
+                         for i, col in enumerate(num_cols)}
         else:
-            return (y - float(target or 0.0)) ** 2
+            # All categorical — just evaluate directly
+            pred_row = {cat_safe_map[col]: str(val) for col, val in cat_fixed.items()}
+            if block_safe:
+                pred_row[block_safe] = block_ref
+            pred_row["y"] = 0.0
+            num_actual = {}
 
-    bounds = [(-1.0, 1.0)] * len(factor_cols)
-    result = differential_evolution(
-        objective, bounds, seed=42, tol=1e-10,
-        maxiter=2000, popsize=20, polish=True,
-    )
+        candidate = {**cat_fixed, **num_actual}
+        pred_candidate = predict_response(fi, candidate)
+        if goal == "maximize":
+            is_better = best_val is None or pred_candidate > best_val
+        elif goal == "minimize":
+            is_better = best_val is None or pred_candidate < best_val
+        else:
+            is_better = best_val is None or abs(pred_candidate - float(target or 0)) < abs(best_val - float(target or 0))
+        if is_better:
+            best_val = pred_candidate
+            best_point = candidate
 
-    best_actual = {}
-    for i, col in enumerate(factor_cols):
-        enc = encoding[col]
-        best_actual[col] = enc["mid"] + result.x[i] * enc["half"]
-
-    return best_actual, predict_response(fi, best_actual)
+    return best_point, predict_response(fi, best_point)
