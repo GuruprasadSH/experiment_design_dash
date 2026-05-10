@@ -1,9 +1,16 @@
 """
-DOE Designer — Plotly Dash GUI  (Design + Analysis)
+DOE Designer — Plotly Dash GUI  (Design + Analysis + AI Assistant)
 Run:  python app.py  → http://127.0.0.1:8050
 """
 
-import io, base64, json, uuid
+import io, base64, json, uuid, os, sys
+
+# Ensure repo root is in sys.path so `agent` package is importable when
+# the script is launched as  python DOE/app.py  from the repo root.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from itertools import combinations
 import numpy as np
 import pandas as pd
@@ -33,6 +40,18 @@ server = app.server
 # Agent state — shared between Flask endpoints and Dash callbacks
 _agent_pending_config: dict = {}   # set by /agent/configure, cleared after Dash reads it
 _agent_readable_state: dict = {}   # set by Dash callbacks, read by /agent/state
+
+# Interviewer session registry — keyed by browser-tab UUID stored in session-id Store
+from agent.interviewer import Interviewer
+
+_sessions: dict[str, Interviewer] = {}
+
+
+def _get_interviewer(session_id: str) -> Interviewer:
+    if session_id not in _sessions:
+        _sessions[session_id] = Interviewer()
+    return _sessions[session_id]
+
 
 ACCENT  = "#2C7BE5"
 CARD_SH = "0 2px 8px rgba(0,0,0,.09)"
@@ -653,17 +672,113 @@ prediction_tab = dbc.Container([
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AI ASSISTANT TAB LAYOUT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+agent_tab = dbc.Container([
+    dbc.Row([
+        # Chat column
+        dbc.Col([
+            html.Div(
+                id="agent-chat-display",
+                style={
+                    "height": "60vh",
+                    "overflowY": "scroll",
+                    "border": "1px solid #dee2e6",
+                    "padding": "1rem",
+                    "borderRadius": "4px",
+                    "background": "#fafbfc",
+                },
+            ),
+            dbc.Row([
+                dbc.Col(
+                    dbc.Input(
+                        id="agent-chat-input",
+                        placeholder="Describe your experiment or answer the question above…",
+                        type="text",
+                        debounce=False,
+                        n_submit=0,
+                    ),
+                    width=9,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        [html.I(className="bi bi-send me-1"), "Send"],
+                        id="agent-send-btn",
+                        color="primary",
+                        n_clicks=0,
+                        className="w-100",
+                    ),
+                    width=3,
+                ),
+            ], className="mt-2 g-2"),
+            dbc.Button(
+                [html.I(className="bi bi-gear-fill me-2"),
+                 "Configure App from Recommendation"],
+                id="agent-configure-btn",
+                color="success",
+                className="mt-2 w-100",
+                n_clicks=0,
+                style={"display": "none"},
+            ),
+        ], md=8),
+
+        # Info sidebar
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader(html.Strong("About this assistant")),
+                dbc.CardBody([
+                    html.P(
+                        "This AI consultant guides you through 7 questions and "
+                        "recommends the best experimental design for your situation, "
+                        "grounded in the NIST Statistical Handbook.",
+                        className="small",
+                    ),
+                    html.P(
+                        "Once a recommendation appears, click "
+                        "'Configure App from Recommendation' to automatically "
+                        "populate the Design tab.",
+                        className="small",
+                    ),
+                    html.Hr(),
+                    html.H6("Available design types:", className="small fw-bold"),
+                    html.Ul([
+                        html.Li("2-Level Full / Fractional Factorial", className="small"),
+                        html.Li("Plackett-Burman (screening)", className="small"),
+                        html.Li("CCD / Box-Behnken (response surface)", className="small"),
+                        html.Li("General Factorial", className="small"),
+                        html.Li("Taguchi orthogonal arrays", className="small"),
+                        html.Li("Simplex Lattice / Centroid (mixtures)", className="small"),
+                    ]),
+                    html.Hr(),
+                    html.P(
+                        html.Small(
+                            "Powered by claude-sonnet-4-6. "
+                            "NIST rules are hardcoded — no RAG retrieval.",
+                            className="text-muted",
+                        )
+                    ),
+                ]),
+            ], style={"boxShadow": CARD_SH}),
+        ], md=4),
+    ], className="mt-3 g-3"),
+], fluid=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN LAYOUT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main = html.Div([
     dbc.Tabs([
-        dbc.Tab(design_tab,     label="Design",                tab_id="tab-design",
+        dbc.Tab(design_tab,     label="Design",                    tab_id="tab-design",
                 label_style={"fontWeight": 600}),
-        dbc.Tab(analysis_tab,   label="Analysis",              tab_id="tab-analysis",
+        dbc.Tab(analysis_tab,   label="Analysis",                  tab_id="tab-analysis",
                 label_style={"fontWeight": 600}),
         dbc.Tab(prediction_tab, label="Prediction & Optimization", tab_id="tab-prediction",
                 label_style={"fontWeight": 600}),
+        dbc.Tab(agent_tab,      label="AI Assistant",              tab_id="tab-agent",
+                label_style={"fontWeight": 600, "color": "#2C7BE5"}),
     ], id="main-tabs", active_tab="tab-design",
        className="px-3 pt-2",
        style={"borderBottom": "1px solid #dee2e6",
@@ -683,6 +798,8 @@ main = html.Div([
     dcc.Store(id="agent-state-sync",    storage_type="memory"),
     dcc.Store(id="session-id",          storage_type="memory", data=str(uuid.uuid4())),
     dcc.Interval(id="agent-poll",       interval=2000, n_intervals=0),
+    # Chat history — survives callback re-invocations within the same browser session
+    dcc.Store(id="agent-chat-history",  storage_type="memory", data=[]),
 ])
 
 app.layout = main
@@ -1952,6 +2069,105 @@ def sync_state_to_agent(fit_info, active_design, factor_count):
             "response_col": store.get("response_col"),
         })
     return dash.no_update
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CALLBACKS — AI ASSISTANT TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _chat_bubble(role: str, content: str) -> html.Div:
+    """Render one chat message as a styled bubble."""
+    is_user = role == "user"
+    return html.Div(
+        html.Div(
+            content,
+            style={
+                "background":    "#2C7BE5" if is_user else "#e9ecef",
+                "color":         "white"   if is_user else "#212529",
+                "padding":       "0.5rem 1rem",
+                "borderRadius":  "12px",
+                "maxWidth":      "80%",
+                "display":       "inline-block",
+                "whiteSpace":    "pre-wrap",
+                "fontSize":      "0.88rem",
+                "lineHeight":    "1.5",
+            },
+        ),
+        style={
+            "textAlign":    "right" if is_user else "left",
+            "marginBottom": "0.6rem",
+        },
+    )
+
+
+@app.callback(
+    Output("agent-chat-display",  "children"),
+    Output("agent-chat-input",    "value"),
+    Output("agent-chat-history",  "data"),
+    Output("agent-configure-btn", "style"),
+    Input("agent-send-btn",       "n_clicks"),
+    Input("agent-chat-input",     "n_submit"),
+    State("agent-chat-input",     "value"),
+    State("session-id",           "data"),
+    State("agent-chat-history",   "data"),
+    prevent_initial_call=True,
+)
+def send_agent_message(n_clicks, n_submit, user_input, session_id, history):
+    """Send user message to the Interviewer, update chat display."""
+    if not user_input or not user_input.strip():
+        return no_update, no_update, no_update, no_update
+
+    history  = list(history or [])
+    session_id = session_id or str(uuid.uuid4())
+    interviewer = _get_interviewer(session_id)
+
+    # First message — prepend the interviewer's opening line
+    if not history:
+        opening = interviewer.start()
+        history.append({"role": "assistant", "content": opening})
+
+    history.append({"role": "user", "content": user_input.strip()})
+
+    try:
+        reply = interviewer.chat(user_input.strip())
+    except Exception as e:
+        reply = f"[Error contacting Claude API: {e}]"
+
+    history.append({"role": "assistant", "content": reply})
+
+    chat_children = [_chat_bubble(m["role"], m["content"]) for m in history]
+    configure_style = (
+        {"display": "block"} if interviewer.has_recommendation() else {"display": "none"}
+    )
+    return chat_children, "", history, configure_style
+
+
+@app.callback(
+    Output("main-tabs", "active_tab"),
+    Input("agent-configure-btn", "n_clicks"),
+    State("session-id", "data"),
+    prevent_initial_call=True,
+)
+def configure_app_from_agent(n_clicks, session_id):
+    """Extract design config from interviewer, push it to Dash, switch to Design tab."""
+    if not n_clicks:
+        return no_update
+
+    session_id  = session_id or ""
+    interviewer = _get_interviewer(session_id)
+    try:
+        config = interviewer.extract_design_config()
+    except Exception:
+        return no_update  # stay on agent tab; user can retry
+
+    # Push config to the pending dict — poll_agent_config will pick it up within 2s
+    _agent_pending_config.clear()
+    _agent_pending_config.update({
+        "design_type": config.get("design_type", "two_level_full"),
+        "factors":     config.get("factors", []),
+        "options":     config.get("options", {}),
+    })
+    return "tab-design"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
