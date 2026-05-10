@@ -732,15 +732,23 @@ agent_tab = dbc.Container([
                     width=3,
                 ),
             ], className="mt-2 g-2"),
-            dbc.Button(
-                [html.I(className="bi bi-gear-fill me-2"),
-                 "Configure App from Recommendation"],
-                id="agent-configure-btn",
-                color="success",
-                className="mt-2 w-100",
-                n_clicks=0,
-                style={"display": "none"},
-            ),
+            html.Div([
+                html.Hr(className="my-2"),
+                html.Small(
+                    "Once the assistant has recommended a design, click below to "
+                    "populate the Design tab automatically.",
+                    className="text-muted d-block mb-2",
+                ),
+                dbc.Button(
+                    [html.I(className="bi bi-gear-fill me-2"),
+                     "Apply Recommended Design →"],
+                    id="agent-configure-btn",
+                    color="success",
+                    className="w-100",
+                    n_clicks=0,
+                    disabled=True,
+                ),
+            ], id="agent-configure-panel", style={"display": "none"}),
         ], md=8),
 
         # Info sidebar
@@ -1622,10 +1630,15 @@ def fit_and_display(n_clicks, analysis_json, response_col, factor_cols, term_tab
                         color="warning")
         return NU, NU, EMPTY, EMPTY, EMPTY, err, NU
 
+    # Only use blocking if there are genuinely multiple blocks
+    effective_block_col = None
+    if block_col_store and block_col_store in df.columns:
+        if df[block_col_store].nunique() > 1:
+            effective_block_col = block_col_store
     try:
         fi = fit_model(df, response_col, list(factor_cols),
                        custom_terms=custom_terms,
-                       block_col=block_col_store)
+                       block_col=effective_block_col)
     except Exception as e:
         err = dbc.Alert(str(e), color="danger", dismissable=True)
         return NU, NU, EMPTY, EMPTY, EMPTY, err, NU
@@ -1693,7 +1706,7 @@ def fit_and_display(n_clicks, analysis_json, response_col, factor_cols, term_tab
         "factor_cols":  fi["factor_cols"],
         "response_col": fi["response_col"],
         "custom_terms": custom_terms,
-        "block_col":    block_col_store,
+        "block_col":    effective_block_col,
         "analysis_df":  analysis_json,
         "anova":        anova_records,
         "model_stats":  ms_clean,
@@ -2211,20 +2224,14 @@ def _chat_bubble(role: str, content: str) -> html.Div:
     prevent_initial_call=True,
 )
 def stage_user_message(n_clicks, n_submit, user_input, session_id, history):
-    """Immediately show user message + thinking bubble; store input for get_agent_reply."""
+    """Immediately show user message + thinking bubble; store input for get_agent_reply.
+    Does NOT modify interviewer state or history — get_agent_reply owns that."""
     if not user_input or not user_input.strip():
         return no_update, no_update, no_update, no_update
 
-    history    = list(history or [])
-    session_id = session_id or str(uuid.uuid4())
-    interviewer = _get_interviewer(session_id)
-
-    if not history:
-        opening = interviewer.start()
-        history.append({"role": "assistant", "content": opening})
-
+    # Render existing history plus the new user message visually (display only)
+    existing = list(history or [])
     user_text = user_input.strip()
-    history.append({"role": "user", "content": user_text})
 
     thinking_bubble = html.Div(
         html.Div(
@@ -2242,42 +2249,63 @@ def stage_user_message(n_clicks, n_submit, user_input, session_id, history):
         id="thinking-bubble",
         style={"textAlign": "left", "marginBottom": "0.6rem"},
     )
-    chat_children = [_chat_bubble(m["role"], m["content"]) for m in history]
+    # Show existing messages + user bubble + thinking bubble immediately
+    chat_children = [_chat_bubble(m["role"], m["content"]) for m in existing]
+    chat_children.append(_chat_bubble("user", user_text))
     chat_children.append(thinking_bubble)
 
-    return chat_children, "", history, {"input": user_text, "session_id": session_id}
+    # Pass user text to get_agent_reply; do NOT update history store yet
+    return chat_children, "", no_update, {"input": user_text, "session_id": session_id or str(uuid.uuid4())}
 
 
 @app.callback(
-    Output("agent-chat-display",   "children",  allow_duplicate=True),
-    Output("agent-chat-history",   "data",      allow_duplicate=True),
-    Output("agent-configure-btn",  "style"),
-    Input("agent-pending-input",   "data"),
-    State("session-id",            "data"),
-    State("agent-chat-history",    "data"),
+    Output("agent-chat-display",    "children",  allow_duplicate=True),
+    Output("agent-chat-history",    "data",      allow_duplicate=True),
+    Output("agent-configure-panel", "style"),
+    Output("agent-configure-btn",   "disabled"),
+    Output("agent-configure-btn",   "children"),
+    Input("agent-pending-input",    "data"),
+    State("session-id",             "data"),
+    State("agent-chat-history",     "data"),
     prevent_initial_call=True,
 )
 def get_agent_reply(pending, session_id, history):
-    """Call Anthropic API and replace the thinking bubble with the real reply."""
+    """Call Anthropic API; interviewer._history is the single source of truth."""
     if not pending or not pending.get("input"):
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
 
-    history    = list(history or [])
-    session_id = session_id or pending.get("session_id", "")
+    session_id  = session_id or pending.get("session_id", "")
     interviewer = _get_interviewer(session_id)
     user_text   = pending["input"]
 
+    # On first ever message, start the interviewer (adds opening to self._history)
+    if not interviewer._history:
+        interviewer.start()
+
     try:
-        reply = interviewer.chat(user_text)
+        reply = interviewer.chat(user_text)   # appends user msg + reply to self._history
     except Exception as e:
         reply = f"[Error contacting Claude API: {e}]"
+        interviewer._history.append({"role": "assistant", "content": reply})
 
-    history.append({"role": "assistant", "content": reply})
-    chat_children = [_chat_bubble(m["role"], m["content"]) for m in history]
-    configure_style = (
-        {"display": "block"} if interviewer.has_recommendation() else {"display": "none"}
+    # Rebuild display and store from interviewer's authoritative history
+    chat_children = [_chat_bubble(m["role"], m["content"]) for m in interviewer._history]
+
+    # Panel always visible once conversation has started
+    panel_style = {"display": "block"}
+
+    # Button enabled only once a design type keyword appears in the recommendation
+    user_turns = sum(1 for m in interviewer._history if m["role"] == "user")
+    has_rec = interviewer.has_recommendation()
+    print(f"[get_agent_reply] user_turns={user_turns} has_recommendation={has_rec} last_reply_snippet={reply[:80]!r}")
+    btn_disabled = not has_rec
+    btn_label = (
+        [html.I(className="bi bi-gear-fill me-2"), "Apply Recommended Design →"]
+        if has_rec else
+        [html.I(className="bi bi-hourglass-split me-2"), "Waiting for recommendation…"]
     )
-    return chat_children, history, configure_style
+
+    return chat_children, list(interviewer._history), panel_style, btn_disabled, btn_label
 
 
 @app.callback(
