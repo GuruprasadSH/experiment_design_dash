@@ -525,6 +525,15 @@ results_accordion = dbc.Accordion([
         html.Div(id="anova-table-div",
                  children=html.Div("Fit a model to see the ANOVA table.",
                                    className="text-muted text-center py-3")),
+        dbc.Collapse(
+            dbc.Card(
+                dbc.CardBody(html.Div(id="interpret-result-div")),
+                className="mt-3",
+                style={"borderLeft": "3px solid #17a2b8", "boxShadow": "0 2px 8px rgba(0,0,0,.09)"},
+            ),
+            id="interpret-collapse",
+            is_open=False,
+        ),
     ], title="ANOVA Table", item_id="anova"),
 
     dbc.AccordionItem([
@@ -574,16 +583,6 @@ analysis_tab = dbc.Container([
         dbc.Col(model_setup_card,  md=3),
         dbc.Col(results_accordion, md=9),
     ], className="mt-3 g-3"),
-    # AI interpretation panel — shown after clicking Interpret Results
-    dbc.Collapse(
-        dbc.Card(
-            dbc.CardBody(html.Div(id="interpret-result-div")),
-            className="mt-3",
-            style={"borderLeft": f"3px solid #17a2b8", "boxShadow": CARD_SH},
-        ),
-        id="interpret-collapse",
-        is_open=False,
-    ),
 ], fluid=True)
 
 
