@@ -227,6 +227,7 @@ def fit_model(df: pd.DataFrame,
         terms=terms, run_order=run_order,
         df_fit=df_fit, df_original=df,
         block_col=block_col,
+        block_safe=block_safe,
     )
 
 
@@ -958,6 +959,11 @@ def predict_response(fi: dict, point_actual: dict) -> float:
         x_a = float(point_actual.get(col, enc["mid"]))
         coded_row[safe_map[col]] = (x_a - enc["mid"]) / enc["half"]
 
+    if fi.get("block_col"):
+        block_safe = fi.get("block_safe") or _safe(fi["block_col"])
+        block_levels = sorted(fi["formula_df"][block_safe].unique().tolist())
+        coded_row[block_safe] = block_levels[0]
+
     pred_df = pd.DataFrame([coded_row])
     pred_df["y"] = 0.0
     return float(fi["results"].predict(pred_df).iloc[0])
@@ -1005,6 +1011,11 @@ def get_surface_data(fi: dict, fa: str, fb: str,
         val_c = (val_a - enc["mid"]) / enc["half"]
         rows[safe_map[col]] = np.full(n * n, val_c)
 
+    if fi.get("block_col"):
+        block_safe = fi.get("block_safe") or _safe(fi["block_col"])
+        block_levels = sorted(fi["formula_df"][block_safe].unique().tolist())
+        rows[block_safe] = [block_levels[0]] * (n * n)
+
     pred_df = pd.DataFrame(rows)
     pred_df["y"] = 0.0
     Z = fi["results"].predict(pred_df).values.reshape(n, n)
@@ -1036,6 +1047,10 @@ def optimize_response(fi: dict, goal: str = "maximize",
     def objective(x_coded):
         pred_row = {safe_map[col]: x_coded[i]
                     for i, col in enumerate(factor_cols)}
+        if fi.get("block_col"):
+            block_safe = fi.get("block_safe") or _safe(fi["block_col"])
+            block_levels = sorted(fi["formula_df"][block_safe].unique().tolist())
+            pred_row[block_safe] = block_levels[0]
         pred_row["y"] = 0.0
         y = float(fi["results"].predict(pd.DataFrame([pred_row])).iloc[0])
         if goal == "maximize":
