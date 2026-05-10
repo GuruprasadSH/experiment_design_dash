@@ -477,8 +477,8 @@ model_setup_card = dbc.Card([
             ],
             dropdown={
                 "In model": {
-                    "options": [{"label": "✓", "value": True},
-                                {"label": "—", "value": False}]
+                    "options": [{"label": "✓", "value": "yes"},
+                                {"label": "—", "value": "no"}]
                 }
             },
             data=[],
@@ -1538,14 +1538,14 @@ def build_term_picker(factor_cols, analysis_json):
     for arity in range(1, k + 1):
         for combo in combinations(range(k), arity):
             term_str = " × ".join(factor_cols[i] for i in combo)
-            rows.append({"Term": term_str, "In model": arity == 1,
+            rows.append({"Term": term_str, "In model": "yes" if arity == 1 else "no",
                          "arity": arity, "disabled": False,
                          "_factors": [factor_cols[i] for i in combo]})
 
     # Add quadratic rows
     for fc in factor_cols:
         quad_label = f"{fc}²"
-        rows.append({"Term": quad_label, "In model": False,
+        rows.append({"Term": quad_label, "In model": "no",
                      "arity": "quad", "disabled": not has_curvature,
                      "_factors": [fc]})
 
@@ -1569,13 +1569,13 @@ def quick_select(n_main, n_twfi, n_full, table_data):
     for row in table_data:
         row = dict(row)
         if row.get("disabled"):
-            row["In model"] = False
+            row["In model"] = "no"
         elif triggered == "qs-main-btn":
-            row["In model"] = (row["arity"] == 1)
+            row["In model"] = "yes" if row["arity"] == 1 else "no"
         elif triggered == "qs-twfi-btn":
-            row["In model"] = (row["arity"] in (1, 2))
+            row["In model"] = "yes" if row["arity"] in (1, 2) else "no"
         elif triggered == "qs-full-btn":
-            row["In model"] = (row["arity"] != "quad")
+            row["In model"] = "yes" if row["arity"] != "quad" else "no"
         updated.append(row)
     return updated
 
@@ -1608,7 +1608,7 @@ def fit_and_display(n_clicks, analysis_json, response_col, factor_cols, term_tab
     # Derive custom_terms from the term-picker table
     custom_terms = None
     if term_table:
-        selected = [row for row in term_table if row.get("In model") and not row.get("disabled")]
+        selected = [row for row in term_table if row.get("In model") == "yes" and not row.get("disabled")]
         if selected:
             custom_terms = []
             for row in selected:
