@@ -24,7 +24,14 @@ def _coded_to_actual(matrix, factors):
     names = [f["name"] for f in factors]
     df = pd.DataFrame(matrix, columns=names)
     for f in factors:
-        df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
+        if f.get("type") == "categoric":
+            levels = f["levels"]  # list of strings
+            # coded values are -1 and +1; map to the two labels
+            df[f["name"]] = df[f["name"]].apply(
+                lambda v: levels[0] if v <= 0 else levels[1]
+            )
+        else:
+            df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
     return df
 
 
@@ -119,7 +126,8 @@ def fractional_factorial(factors, resolution=3, generators=None):
 
     df = pd.DataFrame(matrix[:, :k], columns=names)
     for f in factors:
-        df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
+        if f.get("type") != "categoric":
+            df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
 
     return _add_run_order(df)
 
@@ -137,7 +145,8 @@ def plackett_burman(factors):
     matrix = pyDOE3.pbdesign(k)[:, :k]
     df = pd.DataFrame(matrix, columns=[f["name"] for f in factors])
     for f in factors:
-        df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
+        if f.get("type") != "categoric":
+            df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
     return _add_run_order(df)
 
 
@@ -181,7 +190,7 @@ def general_full_factorial(factors):
     """
     Full factorial with arbitrary number of levels per factor.
     Each factor uses its 'num_levels' field (default 3), linearly spaced
-    between low and high.
+    between low and high. Categorical factors use their 'levels' list.
     """
     level_counts = [max(2, int(f.get("num_levels", 3))) for f in factors]
     matrix = pyDOE3.fullfact(level_counts)  # coded 0 … n-1
@@ -190,10 +199,14 @@ def general_full_factorial(factors):
     for row in matrix:
         point = {}
         for i, f in enumerate(factors):
-            n = level_counts[i]
-            lo, hi = float(f["low"]), float(f["high"])
-            lvls = np.linspace(lo, hi, n)
-            point[f["name"]] = round(lvls[int(row[i])], 6)
+            if f.get("type") == "categoric":
+                levels = f["levels"]
+                point[f["name"]] = levels[int(row[i])]
+            else:
+                n = level_counts[i]
+                lo, hi = float(f["low"]), float(f["high"])
+                lvls = np.linspace(lo, hi, n)
+                point[f["name"]] = round(lvls[int(row[i])], 6)
         rows.append(point)
 
     df = pd.DataFrame(rows, columns=[f["name"] for f in factors])
@@ -225,7 +238,8 @@ def taguchi(factors, array_name="L8(2^7)"):
     matrix = matrix[:, :k]
     df = pd.DataFrame(matrix, columns=[f["name"] for f in factors])
     for f in factors:
-        df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
+        if f.get("type") != "categoric":
+            df[f["name"]] = _encode_levels(df[f["name"]], f["low"], f["high"])
 
     return _add_run_order(df)
 
