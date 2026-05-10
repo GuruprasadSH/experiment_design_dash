@@ -1558,38 +1558,49 @@ def build_term_picker(factor_cols, analysis_json):
         return []
     k = len(factor_cols)
 
-    # Detect whether any factor has center points / 3+ levels
+    # Detect categoric vs numeric columns and curvature
+    cat_cols = set()
     has_curvature = False
     if analysis_json:
         try:
             df = pd.read_json(io.StringIO(analysis_json), orient="split")
             for fc in factor_cols:
                 if fc in df.columns:
-                    vals = df[fc].dropna().unique()
-                    lo, hi = float(vals.min()), float(vals.max())
-                    half = (hi - lo) / 2.0 if (hi - lo) != 0 else 1.0
-                    coded = set(round((v - (lo + hi) / 2) / half, 6) for v in vals)
-                    if not coded.issubset({-1.0, 1.0}):
-                        has_curvature = True
-                        break
+                    if not pd.api.types.is_numeric_dtype(df[fc]):
+                        cat_cols.add(fc)
+                    else:
+                        vals = df[fc].dropna().unique()
+                        lo, hi = float(vals.min()), float(vals.max())
+                        half = (hi - lo) / 2.0 if (hi - lo) != 0 else 1.0
+                        coded = set(round((v - (lo + hi) / 2) / half, 6) for v in vals)
+                        if not coded.issubset({-1.0, 1.0}):
+                            has_curvature = True
         except Exception:
             pass
+
+    def term_label(cols):
+        parts = []
+        for c in cols:
+            parts.append(f"C({c})" if c in cat_cols else c)
+        return " × ".join(parts)
 
     rows = []
     # Generate all non-empty subsets in order: 1-way, 2-way, …, k-way
     for arity in range(1, k + 1):
         for combo in combinations(range(k), arity):
-            term_str = " × ".join(factor_cols[i] for i in combo)
+            cols = [factor_cols[i] for i in combo]
+            term_str = term_label(cols)
             rows.append({"Term": term_str, "In model": "yes" if arity == 1 else "no",
                          "arity": arity, "disabled": False,
-                         "_factors": [factor_cols[i] for i in combo]})
+                         "_factors": cols})
 
-    # Add quadratic rows
+    # Add quadratic rows only for numeric factors
     for fc in factor_cols:
-        quad_label = f"{fc}²"
-        rows.append({"Term": quad_label, "In model": "no",
-                     "arity": "quad", "disabled": not has_curvature,
-                     "_factors": [fc]})
+        if fc not in cat_cols:
+            quad_label = f"{fc}²"
+            rows.append({"Term": quad_label, "In model": "no",
+                         "arity": "quad", "disabled": not has_curvature,
+                         "_factors": [fc]})
 
     return rows
 
@@ -1899,20 +1910,35 @@ def update_surface_constants(fa, fb, fit_store_json, analysis_json):
     if not other:
         return html.Small("(no other factors)", className="text-muted"), []
 
-    enc     = fi["encoding"]
-    inputs  = []
+    fi_cat_cols  = fi.get("cat_cols", [])
+    fi_cat_levels = fi.get("cat_levels", {})
+    enc      = fi["encoding"]
+    inputs   = []
     for i, fname in enumerate(other):
-        e = enc[fname]
-        inputs.append(html.Div([
-            html.Small(f"{fname}:", className="text-muted fw-bold me-1"),
-            dbc.Input(
-                id={"type": "surf-const", "index": i},
-                type="number", value=round(e["mid"], 4),
-                min=e["low"], max=e["high"],
-                size="sm", style={"width": "90px"},
-                debounce=True,
-            ),
-        ], className="d-flex align-items-center"))
+        if fname in fi_cat_cols:
+            lvls = fi_cat_levels.get(fname, [])
+            inputs.append(html.Div([
+                html.Small(f"{fname}:", className="text-muted fw-bold me-1"),
+                dbc.Select(
+                    id={"type": "surf-const", "index": i},
+                    options=[{"label": l, "value": l} for l in lvls],
+                    value=lvls[0] if lvls else None,
+                    size="sm",
+                    style={"width": "90px"},
+                ),
+            ], className="d-flex align-items-center"))
+        else:
+            e = enc[fname]
+            inputs.append(html.Div([
+                html.Small(f"{fname}:", className="text-muted fw-bold me-1"),
+                dbc.Input(
+                    id={"type": "surf-const", "index": i},
+                    type="number", value=round(e["mid"], 4),
+                    min=e["low"], max=e["high"],
+                    size="sm", style={"width": "90px"},
+                    debounce=True,
+                ),
+            ], className="d-flex align-items-center"))
     return html.Div(inputs, className="d-flex flex-wrap gap-3"), other
 
 
@@ -1943,10 +1969,16 @@ def run_optimization_cb(n, goal, target_val, fit_store_json, analysis_json):
 
     goal_label = {"maximize": "Maximum", "minimize": "Minimum",
                   "target": "Target"}.get(goal, goal)
-    rows = [{"Factor": col,
-             "Optimal Setting": f"{val:.4f}",
-             "Range": f"[{fi['encoding'][col]['low']:.4f}, {fi['encoding'][col]['high']:.4f}]"}
-            for col, val in best_point.items()]
+    fi_cat_cols = fi.get("cat_cols", [])
+    rows = []
+    for col, val in best_point.items():
+        if col in fi_cat_cols:
+            rows.append({"Factor": col, "Optimal Setting": str(val), "Range": "categoric"})
+        else:
+            enc = fi["encoding"][col]
+            rows.append({"Factor": col,
+                         "Optimal Setting": f"{val:.4f}",
+                         "Range": f"[{enc['low']:.4f}, {enc['high']:.4f}]"})
 
     return dbc.Card(dbc.CardBody([
         dbc.Row([dbc.Col([
