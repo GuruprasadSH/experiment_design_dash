@@ -4,12 +4,16 @@ Run:  python app.py  → http://127.0.0.1:8050
 """
 
 import io, base64, json, uuid, os, sys
+from dotenv import load_dotenv
 
 # Ensure repo root is in sys.path so `agent` package is importable when
 # the script is launched as  python DOE/app.py  from the repo root.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+
+# Load .env from repo root before any agent/API imports
+load_dotenv(dotenv_path=os.path.join(_REPO_ROOT, ".env"), override=True)
 
 from itertools import combinations
 import numpy as np
@@ -813,9 +817,9 @@ main = html.Div([
     dcc.Store(id="agent-config-store",  storage_type="memory"),
     dcc.Store(id="agent-state-sync",    storage_type="memory"),
     dcc.Store(id="session-id",          storage_type="memory", data=str(uuid.uuid4())),
-    dcc.Interval(id="agent-poll",       interval=2000, n_intervals=0),
     # Chat history — survives callback re-invocations within the same browser session
     dcc.Store(id="agent-chat-history",  storage_type="memory", data=[]),
+    dcc.Store(id="agent-pending-input", storage_type="memory"),
     # Sidebar help stores
     dcc.Store(id="help-chat-history",   storage_type="memory", data=[]),
 
@@ -1991,20 +1995,6 @@ def plot_surface_cb(n, fa, fb, const_vals, const_factors,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.callback(
-    Output("agent-config-store", "data"),
-    Input("agent-poll", "n_intervals"),
-    prevent_initial_call=True,
-)
-def poll_agent_config(n):
-    """Read pending agent config and hand it to the Dash callback chain."""
-    if _agent_pending_config:
-        config = dict(_agent_pending_config)
-        _agent_pending_config.clear()
-        return config
-    return dash.no_update
-
-
-@app.callback(
     Output("results-table",   "children",  allow_duplicate=True),
     Output("design-df",       "data",      allow_duplicate=True),
     Output("error-alert",     "children",  allow_duplicate=True),
@@ -2209,73 +2199,114 @@ def _chat_bubble(role: str, content: str) -> html.Div:
 
 
 @app.callback(
-    Output("agent-chat-display",  "children"),
-    Output("agent-chat-input",    "value"),
-    Output("agent-chat-history",  "data"),
-    Output("agent-configure-btn", "style"),
-    Input("agent-send-btn",       "n_clicks"),
-    Input("agent-chat-input",     "n_submit"),
-    State("agent-chat-input",     "value"),
-    State("session-id",           "data"),
-    State("agent-chat-history",   "data"),
+    Output("agent-chat-display",   "children",  allow_duplicate=True),
+    Output("agent-chat-input",     "value"),
+    Output("agent-chat-history",   "data",      allow_duplicate=True),
+    Output("agent-pending-input",  "data"),
+    Input("agent-send-btn",        "n_clicks"),
+    Input("agent-chat-input",      "n_submit"),
+    State("agent-chat-input",      "value"),
+    State("session-id",            "data"),
+    State("agent-chat-history",    "data"),
     prevent_initial_call=True,
 )
-def send_agent_message(n_clicks, n_submit, user_input, session_id, history):
-    """Send user message to the Interviewer, update chat display."""
+def stage_user_message(n_clicks, n_submit, user_input, session_id, history):
+    """Immediately show user message + thinking bubble; store input for get_agent_reply."""
     if not user_input or not user_input.strip():
         return no_update, no_update, no_update, no_update
 
-    history  = list(history or [])
+    history    = list(history or [])
     session_id = session_id or str(uuid.uuid4())
     interviewer = _get_interviewer(session_id)
 
-    # First message — prepend the interviewer's opening line
     if not history:
         opening = interviewer.start()
         history.append({"role": "assistant", "content": opening})
 
-    history.append({"role": "user", "content": user_input.strip()})
+    user_text = user_input.strip()
+    history.append({"role": "user", "content": user_text})
+
+    thinking_bubble = html.Div(
+        html.Div(
+            html.Em("Thinking…"),
+            style={
+                "background": "#e9ecef",
+                "color": "#6c757d",
+                "padding": "0.5rem 1rem",
+                "borderRadius": "12px",
+                "maxWidth": "80%",
+                "display": "inline-block",
+                "fontSize": "0.88rem",
+            },
+        ),
+        id="thinking-bubble",
+        style={"textAlign": "left", "marginBottom": "0.6rem"},
+    )
+    chat_children = [_chat_bubble(m["role"], m["content"]) for m in history]
+    chat_children.append(thinking_bubble)
+
+    return chat_children, "", history, {"input": user_text, "session_id": session_id}
+
+
+@app.callback(
+    Output("agent-chat-display",   "children",  allow_duplicate=True),
+    Output("agent-chat-history",   "data",      allow_duplicate=True),
+    Output("agent-configure-btn",  "style"),
+    Input("agent-pending-input",   "data"),
+    State("session-id",            "data"),
+    State("agent-chat-history",    "data"),
+    prevent_initial_call=True,
+)
+def get_agent_reply(pending, session_id, history):
+    """Call Anthropic API and replace the thinking bubble with the real reply."""
+    if not pending or not pending.get("input"):
+        return no_update, no_update, no_update
+
+    history    = list(history or [])
+    session_id = session_id or pending.get("session_id", "")
+    interviewer = _get_interviewer(session_id)
+    user_text   = pending["input"]
 
     try:
-        reply = interviewer.chat(user_input.strip())
+        reply = interviewer.chat(user_text)
     except Exception as e:
         reply = f"[Error contacting Claude API: {e}]"
 
     history.append({"role": "assistant", "content": reply})
-
     chat_children = [_chat_bubble(m["role"], m["content"]) for m in history]
     configure_style = (
         {"display": "block"} if interviewer.has_recommendation() else {"display": "none"}
     )
-    return chat_children, "", history, configure_style
+    return chat_children, history, configure_style
 
 
 @app.callback(
-    Output("main-tabs", "active_tab"),
+    Output("agent-config-store", "data",     allow_duplicate=True),
+    Output("main-tabs",          "active_tab"),
     Input("agent-configure-btn", "n_clicks"),
-    State("session-id", "data"),
+    State("session-id",          "data"),
     prevent_initial_call=True,
 )
 def configure_app_from_agent(n_clicks, session_id):
-    """Extract design config from interviewer, push it to Dash, switch to Design tab."""
+    """Extract design config from interviewer, write store + switch to Design tab atomically."""
     if not n_clicks:
-        return no_update
+        return no_update, no_update
 
     session_id  = session_id or ""
     interviewer = _get_interviewer(session_id)
     try:
         config = interviewer.extract_design_config()
-    except Exception:
-        return no_update  # stay on agent tab; user can retry
+    except Exception as e:
+        print(f"[configure_app_from_agent] extraction failed: {e}")
+        return no_update, no_update
 
-    # Push config to the pending dict — poll_agent_config will pick it up within 2s
-    _agent_pending_config.clear()
-    _agent_pending_config.update({
+    payload = {
         "design_type": config.get("design_type", "two_level_full"),
         "factors":     config.get("factors", []),
         "options":     config.get("options", {}),
-    })
-    return "tab-design"
+    }
+    print(f"[configure_app_from_agent] pushing config: {payload}")
+    return payload, "tab-design"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2303,6 +2334,7 @@ def toggle_interpret_btn(fit_info):
 )
 def interpret_results(n_clicks, fit_store_json):
     """Call Interpreter on the fitted ANOVA and display the plain-English result."""
+    print(f"[interpret_results] fired: n_clicks={n_clicks}, fit_store present={bool(fit_store_json)}")
     if not n_clicks or not fit_store_json:
         return no_update, no_update
 
@@ -2320,7 +2352,12 @@ def interpret_results(n_clicks, fit_store_json):
             anova_data, model_stats, factor_cols, response_col
         )
     except Exception as e:
-        interp_text = f"[Interpretation unavailable: {e}]"
+        error_content = dbc.Alert(
+            [html.Strong("Interpretation error: "), str(e)],
+            color="danger",
+            className="mb-0",
+        )
+        return True, error_content
 
     rec_key, rec_justification = recommend_next_step(model_stats, anova_data)
     rec_labels = {
