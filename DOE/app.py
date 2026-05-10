@@ -604,80 +604,70 @@ analysis_tab = dbc.Container([
 # ═══════════════════════════════════════════════════════════════════════════════
 
 prediction_tab = dbc.Container([
+    # Top: Coefficients + Equation
     dbc.Row([
-        # Left: Coefficients + Equation
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader(html.Strong("Regression Coefficients")),
-                dbc.CardBody(html.Div(
-                    id="pred-coefficients-div",
-                    children=html.Div("Fit a model on the Analysis tab first.",
-                                      className="text-muted text-center py-3"),
-                )),
-            ], style={"boxShadow": CARD_SH}),
-            dbc.Card([
-                dbc.CardHeader(html.Strong("Model Equation")),
-                dbc.CardBody(html.Div(id="pred-equation-div")),
-            ], className="mt-3", style={"boxShadow": CARD_SH}),
-        ], md=7),
-
-        # Right: Optimization
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader(html.Strong("Response Optimization")),
-                dbc.CardBody([
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Label("Goal", className="small fw-bold mb-1"),
-                            dbc.RadioItems(
-                                id="opt-goal",
-                                options=[
-                                    {"label": " Maximize", "value": "maximize"},
-                                    {"label": " Minimize", "value": "minimize"},
-                                    {"label": " Target",   "value": "target"},
-                                ],
-                                value="maximize",
-                                className="mb-2",
-                            ),
-                        ], width=6),
-                        dbc.Col([
-                            dbc.Label("Target Value", className="small fw-bold mb-1"),
-                            dbc.Input(id="opt-target-value", type="number", size="sm",
-                                      placeholder="Enter target…"),
-                            html.Small("(used when goal = Target)",
-                                       className="text-muted d-block mt-1"),
-                        ], width=6),
-                    ], className="g-2"),
-                    dbc.Button(
-                        [html.I(className="bi bi-bullseye me-2"), "Run Optimization"],
-                        id="optimize-btn", color="primary",
-                        className="w-100 mt-2", n_clicks=0,
-                    ),
-                    html.Div(id="optimization-results", className="mt-2"),
-                ]),
-            ], style={"boxShadow": CARD_SH}),
-        ], md=5),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader(html.Strong("Regression Coefficients")),
+            dbc.CardBody(html.Div(id="pred-coefficients-div",
+                                  children=html.Div("Fit a model on the Analysis tab first.",
+                                                    className="text-muted text-center py-3"))),
+        ], style={"boxShadow": CARD_SH}), md=7),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader(html.Strong("Model Equation")),
+            dbc.CardBody(html.Div(id="pred-equation-div")),
+        ], style={"boxShadow": CARD_SH}), md=5),
     ], className="mt-3 g-3"),
 
-    # Response Surface
+    # Bottom: Controls left, Surface right
     dbc.Row([
+        # Left: Optimization controls (sticky)
+        dbc.Col(dbc.Card([
+            dbc.CardHeader(html.Strong("Response Optimization")),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Goal", className="small fw-bold mb-1"),
+                        dbc.RadioItems(
+                            id="opt-goal",
+                            options=[
+                                {"label": " Maximize", "value": "maximize"},
+                                {"label": " Minimize", "value": "minimize"},
+                                {"label": " Target",   "value": "target"},
+                            ],
+                            value="maximize", className="mb-2",
+                        ),
+                    ], width=6),
+                    dbc.Col([
+                        dbc.Label("Target Value", className="small fw-bold mb-1"),
+                        dbc.Input(id="opt-target-value", type="number", size="sm",
+                                  placeholder="Enter target…"),
+                        html.Small("(used when goal = Target)", className="text-muted d-block mt-1"),
+                    ], width=6),
+                ], className="g-2"),
+                dbc.Button(
+                    [html.I(className="bi bi-bullseye me-2"), "Run Optimization"],
+                    id="optimize-btn", color="primary",
+                    className="w-100 mt-2", n_clicks=0,
+                ),
+                html.Div(id="optimization-results", className="mt-2"),
+            ]),
+        ], style={"boxShadow": CARD_SH, "position": "sticky", "top": "1rem"}), md=4),
+
+        # Right: Response surface
         dbc.Col(dbc.Card([
             dbc.CardHeader(html.Strong("Response Surface Plots")),
             dbc.CardBody([
                 dbc.Row([
                     dbc.Col([
                         dbc.Label("Factor X", className="small fw-bold mb-0"),
-                        dcc.Dropdown(id="surface-fa", clearable=False,
-                                     placeholder="Select…"),
+                        dcc.Dropdown(id="surface-fa", clearable=False, placeholder="Select…"),
                     ], md=3),
                     dbc.Col([
                         dbc.Label("Factor Y", className="small fw-bold mb-0"),
-                        dcc.Dropdown(id="surface-fb", clearable=False,
-                                     placeholder="Select…"),
+                        dcc.Dropdown(id="surface-fb", clearable=False, placeholder="Select…"),
                     ], md=3),
                     dbc.Col([
-                        dbc.Label("Other factors held at:",
-                                  className="small fw-bold mb-0"),
+                        dbc.Label("Other factors held at:", className="small fw-bold mb-0"),
                         html.Div(id="surface-constants-container",
                                  className="d-flex flex-wrap gap-2 mt-1"),
                     ], md=4),
@@ -690,16 +680,14 @@ prediction_tab = dbc.Container([
                     ),
                 ], className="g-2 align-items-end mb-3"),
                 dbc.Row([
-                    dbc.Col(dcc.Graph(id="contour-plot",
-                                     config={"displayModeBar": True},
+                    dbc.Col(dcc.Graph(id="contour-plot", config={"displayModeBar": True},
                                      style={"minHeight": "420px"}), md=6),
-                    dbc.Col(dcc.Graph(id="surface-3d-plot",
-                                     config={"displayModeBar": True},
+                    dbc.Col(dcc.Graph(id="surface-3d-plot", config={"displayModeBar": True},
                                      style={"minHeight": "420px"}), md=6),
                 ]),
             ]),
-        ], style={"boxShadow": CARD_SH})),
-    ], className="mt-3"),
+        ], style={"boxShadow": CARD_SH}), md=8),
+    ], className="mt-3 g-3"),
 ], fluid=True)
 
 
