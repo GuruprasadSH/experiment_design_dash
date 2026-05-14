@@ -925,6 +925,7 @@ def plot_interaction(fi: dict, factor_a: str, factor_b: str) -> go.Figure:
             name=f"{factor_b} = {bv}",
             line=dict(color=palette[j % len(palette)], width=2),
             marker=dict(size=9),
+            connectgaps=True,
         ))
     fig.update_layout(**_layout(
         title=dict(text=f"Interaction Plot:  {factor_a}  ×  {factor_b}", font_size=14),
@@ -1219,3 +1220,77 @@ def optimize_response(fi: dict, goal: str = "maximize",
             best_point = candidate
 
     return best_point, predict_response(fi, best_point)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Interpretation Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_residual_stats(fi: dict) -> dict:
+    """Return numerical residual diagnostics for AI interpretation.
+
+    Supplements the visual 4-panel residual plot with exact statistics so that
+    the AI model can cite precise numbers (Shapiro-Wilk p-value, outlier count,
+    skewness) while also seeing the plot image.
+    """
+    from scipy.stats import shapiro
+    rdf = get_residuals(fi)
+    e   = rdf["Residual"].values
+    std_e = rdf["Std Residual"].values if "Std Residual" in rdf.columns else e / (np.std(e) or 1.0)
+    sw_stat, sw_p = shapiro(e)
+    return {
+        "n_obs":             int(len(e)),
+        "rmse":              round(float(np.std(e, ddof=1)), 4),
+        "min_residual":      round(float(e.min()), 4),
+        "max_residual":      round(float(e.max()), 4),
+        "skewness":          round(float(pd.Series(e).skew()), 4),
+        "shapiro_wilk_stat": round(float(sw_stat), 4),
+        "shapiro_wilk_p":    round(float(sw_p), 4),
+        "normality_ok":      bool(sw_p > 0.05),
+        "max_std_residual":  round(float(np.abs(std_e).max()), 4),
+        "n_outliers_3sigma": int((np.abs(std_e) > 3).sum()),
+    }
+
+
+def fig_to_b64(fig, width: int = 900, height: int = 430) -> str:
+    """Export a Plotly figure to a base64-encoded PNG string.
+
+    Tries two rendering paths in order:
+    1. fig.to_image()  — works with kaleido 0.2.x + Plotly 5.x, or kaleido 1.x + Plotly 6.x
+    2. kaleido.calc_fig_sync() — kaleido 1.x direct API, compatible with any Plotly version
+
+    Returns an empty string if both paths fail.
+    """
+    import base64
+
+    # ── Path 1: Plotly built-in (kaleido 0.2.x / Plotly 5, or kaleido 1.x / Plotly 6) ──
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            png_bytes = fig.to_image(format="png", width=width, height=height, scale=1.5)
+        if png_bytes:
+            return base64.b64encode(png_bytes).decode()
+    except Exception:
+        pass
+
+    # ── Path 2: kaleido 1.x calc_fig_sync (works regardless of Plotly version) ──
+    try:
+        import kaleido, warnings
+        # Pass dimensions through the figure layout so kaleido picks them up
+        fig_copy = fig
+        try:
+            import copy
+            fig_copy = copy.deepcopy(fig)
+            fig_copy.update_layout(width=width, height=height)
+        except Exception:
+            pass
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            png_bytes = kaleido.calc_fig_sync(fig_copy)
+        if png_bytes:
+            return base64.b64encode(png_bytes).decode()
+    except Exception:
+        pass
+
+    return ""

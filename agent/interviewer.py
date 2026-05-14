@@ -7,7 +7,10 @@ Dash callbacks is managed by a module-level session dict in app.py.
 
 import json
 from anthropic import Anthropic
+from dotenv import load_dotenv
 from agent.knowledge import DESIGN_SELECTION_RULES, VALID_DESIGN_TYPES
+
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = f"""You are an expert Design of Experiments consultant.
 Your job is to interview the user, understand their experimental problem,
@@ -108,10 +111,35 @@ class Interviewer:
         return self._config_extracted
 
     def has_recommendation(self) -> bool:
-        """Heuristic: True if the agent has already given a design recommendation."""
-        for msg in self._history:
-            if msg["role"] == "assistant" and any(
-                dt in msg["content"] for dt in VALID_DESIGN_TYPES
-            ):
+        """Heuristic: True if the agent has already given a design recommendation.
+        Only checks after at least 7 user turns (the interview has 7 questions),
+        then scans assistant messages for design type names or recommendation phrases."""
+        user_turns = sum(1 for m in self._history if m["role"] == "user")
+        if user_turns < 7:
+            return False
+
+        # Code names from the app + natural language terms the model actually writes
+        RECOMMENDATION_KEYWORDS = set(VALID_DESIGN_TYPES) | {
+            # fractional / two-level
+            "fractional factorial", "full factorial", "two-level factorial",
+            "2^k", "2k factorial",
+            # screening
+            "plackett-burman", "plackett burman",
+            # RSM
+            "central composite", "ccd", "box-behnken", "box behnken",
+            # other
+            "general factorial", "taguchi", "simplex lattice", "simplex centroid",
+            # catch-all phrases that appear at the end of any recommendation
+            "i recommend", "i would recommend", "recommended design",
+            "my recommendation",
+        }
+        # Only scan assistant messages from turn 7 onwards
+        assistant_msgs_after_interview = [
+            m for i, m in enumerate(self._history)
+            if m["role"] == "assistant" and i >= 13  # 7 pairs = index 14+
+        ]
+        for msg in assistant_msgs_after_interview:
+            content_lower = msg["content"].lower()
+            if any(kw in content_lower for kw in RECOMMENDATION_KEYWORDS):
                 return True
         return False

@@ -77,6 +77,115 @@ NEXT STEPS DECISION TREE:
 - After finding optimum → always run 3-5 confirmatory runs at predicted optimum before implementing
 """
 
+DESIGN_REVIEW_GUIDELINES = """
+EXPERIMENTAL DESIGN REVIEW (NIST Handbook of Statistical Methods):
+
+APPROPRIATENESS:
+- Two-level full factorial (2^k): ideal for k=2–4 factors when interactions must be quantified
+- Fractional factorial (Res III–V): use for k≥5 factors or limited budget; note aliasing trade-offs
+- Plackett-Burman: purely for screening ≥5 factors; main effects only, interactions fully confounded
+- CCD (Central Composite): for optimisation when quadratic curvature is expected; needs 3+ levels per factor
+- Box-Behnken: alternative RSM when extreme corners of the design space are infeasible
+
+RUN COUNT / POWER:
+- Error degrees of freedom ≥ 6 recommended for a reliable MSE estimate
+- Fewer than 3 df_error makes F-tests unreliable; flag if df_error < 6
+- Center points add error df without inflating factor runs — valuable in 2-level designs
+
+BLOCKING AND REPLICATION:
+- Blocking removes known nuisance variation (batches, operators, days) from the error term
+- True replication (independent re-randomisation) is required for a valid pure-error estimate
+- Multiple blocks increase precision if block effects are substantial
+- Center points: 3–5 recommended per block for curvature detection
+
+ERROR DEGREES OF FREEDOM FORMULA:
+  df_error = total_runs - df_model - 1 (intercept) - df_block
+"""
+
+ANOVA_REVIEW_GUIDELINES = """
+ANOVA AND MODEL FIT INTERPRETATION (Montgomery, Design and Analysis of Experiments):
+
+SIGNIFICANCE THRESHOLDS:
+- Overall model p < 0.05: model explains statistically significant variation
+- Individual term p < 0.05: that effect is active at the 5% level
+- Lack-of-Fit p < 0.10: model form may be inadequate; consider adding terms
+- Lack-of-Fit p ≥ 0.10: no evidence of systematic misfit
+
+MODEL FIT STATISTICS:
+- R² > 0.90: good fit for engineering/manufacturing purposes
+- Adj R² close to R²: gap > 0.10 suggests too many terms relative to runs (overfitting)
+- Pred R² > 0.70: model will generalise to new observations within the design space
+- Pred R² vs Adj R² gap > 0.20: likely overfitting or an influential outlier — inspect residuals
+- RMSE (S): the estimated standard deviation of experimental error in response units
+
+NEXT-STEP RULES:
+- Good fit + LOF not significant → proceed to optimisation
+- All terms insignificant → widen factor ranges or add runs to increase power
+- LOF significant → add curvature terms (CCD) or additional center-point replicates
+- Large Adj R²/Pred R² gap → remove non-significant terms; check for outliers
+"""
+
+EFFECTS_REVIEW_GUIDELINES = """
+EFFECTS AND INTERACTION ANALYSIS (Montgomery, Design and Analysis of Experiments):
+
+PARETO CHART:
+- Bars represent standardised effects (|t-value| or |effect estimate|) sorted largest to smallest
+- Bonferroni-corrected line: effects above this line are significant at experiment-wide α=0.05
+- t-value reference line: effects above this but below Bonferroni are potentially active
+- Effects below both lines: likely noise
+
+HALF-NORMAL PLOT:
+- Active effects appear as points deviating above the reference line through the origin
+- Points following the line closely are noise effects
+- A clear separation between noise cloud and outlying points confirms active factors
+- Multiple outlying points may indicate interactions or quadratic effects
+
+MAIN EFFECTS PLOT:
+- Steep slope = large effect; flat line = negligible effect
+- Slope direction shows whether increasing the factor increases or decreases the response
+- Parallel lines in main effects (with non-parallel interaction lines) indicate masked effects
+
+INTERACTION PLOT:
+- Parallel lines = no interaction (interpret main effects independently)
+- Crossing or diverging lines = significant interaction (interpret effects jointly)
+- The greater the non-parallelism, the stronger the interaction
+- Always check interaction plots before drawing conclusions from main effects alone
+
+PRACTICAL VS STATISTICAL SIGNIFICANCE:
+- A statistically significant effect may be practically unimportant if the magnitude is small
+- Always interpret effect size in the context of engineering tolerances or process targets
+"""
+
+RESIDUAL_REVIEW_GUIDELINES = """
+RESIDUAL DIAGNOSTICS (NIST Engineering Statistics Handbook, Chapter 4):
+
+NORMAL PROBABILITY PLOT (Q-Q):
+- Points should follow the diagonal reference line closely
+- S-shaped curve → heavy tails or bimodal distribution (possible outliers)
+- Systematic curve → skewed distribution; transformation of response may help
+- A few isolated points far from the line → outliers worth investigating
+
+RESIDUALS vs FITTED VALUES:
+- Expected pattern: random horizontal scatter around zero with constant width
+- Fan/funnel shape (variance increases with fitted value) → heteroscedasticity; try log or sqrt transform
+- Curved pattern → missing quadratic term; consider augmenting to CCD
+- Systematic band structure → possible discrete or bounded response variable
+
+RESIDUALS vs RUN ORDER:
+- Expected pattern: random scatter with no trend
+- Upward or downward drift → lurking time-related variable (machine warm-up, reagent aging, operator learning)
+- Cyclical pattern → periodic environmental effect; consider adding a blocking variable
+
+OUTLIERS:
+- Standardised residuals outside ±3 are potential outliers
+- Investigate cause before removing: recording error, unusual condition, or genuine process event
+
+SHAPIRO-WILK TEST:
+- p ≥ 0.05: insufficient evidence to reject normality (residuals consistent with normal distribution)
+- p < 0.05: normality rejected; examine Q-Q plot for the nature of departure
+- Note: with small n (<10), the test has low power; use the plot primarily
+"""
+
 # Design type keys recognised by the Dash app (from app.py DESIGNS dict)
 VALID_DESIGN_TYPES = [
     "two_level_full",
